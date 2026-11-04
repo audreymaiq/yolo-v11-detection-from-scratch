@@ -654,6 +654,7 @@ class RandomPerspective(BaseTransform):
         self.pre_transform_shape = (height, width)
 
         border = tuple(border)
+        self.size = (width + border[1] * 2, height + border[0] * 2)  # output (w, h)
         # Center determination
         C = np.eye(3, dtype=np.float32)
         C[0, 2] = -width / 2
@@ -672,23 +673,12 @@ class RandomPerspective(BaseTransform):
         S[0, 1] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)
         S[1, 0] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)
 
-        # Translation
+        # Translation: place the image center around the output center, +/- translate * output size
         T = np.eye(3, dtype=np.float32)
-        T[0, 2] = random.uniform(0.5 - self.translate, 0.5 + self.translate) * width
-        T[1, 2] = random.uniform(0.5 - self.translate, 0.5 + self.translate) * height
+        T[0, 2] = random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[0]
+        T[1, 2] = random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[1]
 
         M = T @ S @ R @ P @ C
-
-        if border != (0, 0):
-            target_w = width + border[1] * 2 
-            target_h = height + border[0] * 2
-            self.size = (target_w, target_h)
-            
-            # Shift coordinate system
-            M[0, 2] += border[1]  
-            M[1, 2] += border[0] 
-        else:
-            self.size = (width, height)
 
         if (border != (0, 0)) or not np.allclose(M, np.eye(3)):
             # Dynamic border value based on channels
