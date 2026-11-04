@@ -37,8 +37,8 @@ def run(args: argparse.Namespace) -> dict:
     cfg = {**base, **{k: v for k, v in options.items() if v is not None}}
     cfg.update(
         data=args.data, split=args.split, batch=args.batch, half=args.half, save_json=args.save_json,
-        workers=args.workers, rect=False, device=args.device, save_dir=args.save_dir,
-        name=None, plots=False, verbose=True,
+        workers=args.workers, device=args.device, save_dir=args.save_dir, name=None, plots=False, verbose=True,
+        rect=True,  # rectangular batches, as during training validation
     )
     validator = DetectionValidator(save_dir=Path(args.save_dir), args=cfg)
     with torch.no_grad():

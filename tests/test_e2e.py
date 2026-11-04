@@ -56,6 +56,25 @@ def test_val(run_dir, tiny_dataset, tmp_path):
     assert out.is_file() and "metrics/mAP50-95(B)" in out.read_text()
 
 
+def test_val_uses_rectangular_batches_like_training(run_dir, tiny_dataset, tmp_path, monkeypatch):
+    import yolo11.evaluation.validator as validator_module
+
+    rects = []
+    build = validator_module.build_yolo_dataset
+
+    def spy(cfg, *args, **kwargs):
+        dataset = build(cfg, *args, **kwargs)
+        rects.append(dataset.rect)
+        return dataset
+
+    monkeypatch.setattr(validator_module, "build_yolo_dataset", spy)
+    main([
+        "val", "--weights", str(run_dir / "weights" / "best.pt"), "--data", str(tiny_dataset), "--imgsz", "64",
+        "--batch", "2", "--device", "cpu", "--workers", "0", "--save-dir", str(tmp_path),
+    ])
+    assert rects == [True]
+
+
 def test_predict(run_dir, tiny_dataset, tmp_path):
     src = tiny_dataset.parent / "images" / "val"
     main([
