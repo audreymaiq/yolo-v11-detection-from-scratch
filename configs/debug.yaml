@@ -1,0 +1,126 @@
+# HARDWARE & SYSTEM
+seed: 42 # (int) Random seed for initialization of torch, numpy, and random.
+deterministic: True # (bool) Enable deterministic algorithms (cudnn.benchmark=False, cudnn.deterministic=True).
+device: # (int | str | list) Device selection. Examples: 0, [0,1], cpu.
+workers: 0 # (int) Number of subprocesses for data loading. Capped by os.cpu_count() and batch size.
+amp: True # (bool) Enable Automatic Mixed Precision (FP16) for training.
+compile: False # (bool) Enable torch.compile() backend.
+verbose: True # (bool) Print detailed logs.
+cache: disk # (bool | str) Cache images for faster loading. Options: True (RAM), 'disk', or False.
+
+# DATA
+data: datasets/debug/data.yaml # (str) Path to dataset configuration file.
+name: test_augment # (str) Experiment name. Results saved to 'runs/{name}'.
+imgsz: 640 # (int | list) train/val use int (square); predict/export may use [h,w]
+batch: 24 # (int) Batch size per GPU.
+rect: False # (bool) Rectangular training. False=Square padding (Training). True=Min padding (Val/Speed).
+single_cls: False # (bool) Force dataset to single class mode.
+fraction: 1.0 # (float) Fraction of dataset to use for training (0.0 - 1.0).
+multi_scale: False # (bool) Vary image sizes +/- 50% during training.
+
+# MODEL ARCHITECTURE
+model: yolov11n # (str) Path to model file or architecture yaml.
+pretrained: False # (bool) Load weights from 'model'. False initializes from scratch.
+freeze: # (int | list) Freeze the first N layers or specific layer indices.
+
+# TRAINING
+resume: False # (bool) Resume training from last checkpoint.
+epochs: 10 # (int) Total number of training epochs.
+time: # (float) Maximum training time in hours.
+patience: 100 # (int) Epochs to wait for no improvement in mAP50-95 before early stopping.
+nbs: 64 # (int) Nominal batch size. Used to calculate gradient accumulation steps (accumulate = nbs / batch).
+
+# Optimizer
+optimizer: SGD # (str) Optimization algorithm. Options: SGD, Adam, AdamW, auto.
+lr0: 0.01 # (float) Initial learning rate.
+lrf: 0.01 # (float) Final learning rate factor. Final LR = lr0 * lrf.
+momentum: 0.937 # (float) Momentum factor for SGD or Beta1 for Adam.
+weight_decay: 0.0005 # (float) L2 penalty term for weight regularization.
+cos_lr: False # (bool) Use Cosine Annealing scheduler (True) or Linear scheduler (False).
+
+# Warmup
+warmup_epochs: 3.0 # (float) Epochs for parameter warmup.
+warmup_momentum: 0.8 # (float) Momentum value during warmup.
+warmup_bias_lr: 0.1 # (float) Bias learning rate during warmup.
+
+# DATA AUGMENTATION
+augment: False # (bool) Enable/disable training data augmentation including Mosaic, Mixup, and Color space transforms.
+
+# Mosaic
+mosaic: 1.0 # (float) Probability of applying Mosaic augmentation (stitching 4 images).
+close_mosaic: 2 # (int) Epochs before end of training to disable Mosaic augmentation.
+
+# Affine Transforms
+scale: 0.5 # (float) Image scaling factor (+/- gain).
+degrees: 0.0 # (float) Image rotation (+/- degrees).
+translate: 0.1 # (float) Image translation (+/- fraction).
+shear: 0.0 # (float) Image shear (+/- degrees).
+perspective: 0.0 # (float) Image perspective transform (+/- fraction).
+
+# Mixing
+mixup: 0.1 # (float) Probability of applying Mixup (blending 2 images).
+cutmix: 0.0 # (float) Probability of applying CutMix.
+
+# Color Space
+hsv_h: 0.015 # (float) HSV Hue augmentation fraction.
+hsv_s: 0.7 # (float) HSV Saturation augmentation fraction.
+hsv_v: 0.4 # (float) HSV Value (Brightness) augmentation fraction.
+grayscale: 0.01 # (float) Probability of converting image to grayscale.
+bgr: 0.0 # (float) Probability of swapping image channels (RGB <-> BGR).
+
+# Orientation
+flipud: 0.0 # (float) Probability of vertical flip.
+fliplr: 0.5 # (float) Probability of horizontal flip.
+
+# Padding
+pad_color: 114 # (int) Color value for padding (RGB/Gray).
+
+# OBJECTIVE FUNCTION
+box: 7.5 # (float) Weight/gain for box regression loss component.
+dfl: 1.5 # (float) Weight/gain for Distribution Focal Loss component.
+cls: 0.5 # (float) Weight/gain for classification loss component.
+
+# VALIDATION & POSTPROCESSING
+val: True # (bool) Execute validation loop after each training epoch.
+split: val # (str) Dataset split to use for validation.
+conf: 0.001 # (float) Confidence threshold for object detection.
+iou: 0.7 # (float) IoU threshold for Non-Maximum Suppression (NMS).
+max_det: 300 # (int) Maximum number of detections per image.
+half: False # (bool) Use FP16 half-precision for validation inference.
+dnn: False # (bool) Use OpenCV DNN module for ONNX inference.
+
+# LOGGING & ARTIFACTS
+save_dir: runs # (str) Directory for saving checkpoints and logs.
+save: True # (bool) save train checkpoints and predict results
+save_period: 0 # (int) Frequency of saving checkpoints in epochs (0 = save only best/last).
+plots: True # (bool) Generate and save training plots and debug images.
+visualize: False # (bool) Visualize intermediate feature maps.
+save_json: False # (bool) Save validation results to COCO JSON format.
+save_txt: False # (bool) Save detection results to text files.
+save_conf: False # (bool) Save confidence scores in text files.
+save_crop: False # (bool) Save cropped images of detections.
+
+# LEGACY / PREDICT SETTINGS
+source: # (str) Input source for prediction.
+vid_stride: 1 # (int) Step size for video frames.
+stream_buffer: False # (bool) Buffer strategy for streams.
+agnostic_nms: False # (bool) Method for NMS (Class-agnostic vs Class-specific).
+classes: # (list) Filter predictions by class ID.
+embed: # (list) Indices of layers to extract embeddings from.
+show: False # (bool) Display inference results on screen.
+save_frames: False # (bool) Save video frames as images.
+show_labels: True # (bool) Draw class labels on output images.
+show_conf: True # (bool) Draw confidence scores on output images.
+show_boxes: True # (bool) Draw bounding boxes on output images.
+line_width: # (int) Line thickness for bounding boxes.
+
+# EXPORT SETTINGS
+format: torchscript # (str) Target format for model export.
+keras: False # (bool) Use Keras format (SavedModel).
+optimize: False # (bool) Optimize TorchScript for mobile.
+int8: False # (bool) Quantization to INT8.
+dynamic: False # (bool) Enable dynamic axes for ONNX/TensorRT.
+simplify: True # (bool) Apply ONNX simplification.
+opset: # (int) ONNX opset version.
+workspace: # (int) TensorRT workspace size in GB.
+nms: False # (bool) Add NMS post-processing to CoreML model.
