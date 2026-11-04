@@ -21,7 +21,7 @@ from yolo11.registry.optimizer_registry import OptimizerRegistry
 from yolo11.evaluation.validator import DetectionValidator
 from yolo11.models.model import DetectionModel
 from yolo11.utils.visualize_utils import plot_images, plot_labels, plot_results
-from yolo11.utils.torch_utils import ModelEMA, EarlyStopping, init_seeds, unwrap_model, autocast, check_amp, check_imgsz, load_checkpoint, convert_optimizer_state_dict_to_fp16, attempt_compile, one_cycle, strip_optimizer, torch_distributed_zero_first, print_args, get_cfg, get_save_dir
+from yolo11.utils.torch_utils import ModelEMA, EarlyStopping, init_seeds, unwrap_model, autocast, check_amp, check_imgsz, load_checkpoint, convert_optimizer_state_dict_to_fp16, attempt_compile, one_cycle, strip_optimizer, torch_distributed_zero_first, print_args, get_cfg, get_save_dir, select_device
 from yolo11.training.losses import v8DetectionLoss
 
 LOGGER = logging.getLogger(__name__) 
@@ -39,10 +39,7 @@ class DetectionTrainer:
         self.check_resume(config_dict)
         
         # Device setup
-        if getattr(self.args, 'device', None):
-            self.device = torch.device(self.args.device)
-        else:
-            self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.device = select_device(getattr(self.args, 'device', None))
         self.args.device = str(self.device)
         
         # Initialize attributes

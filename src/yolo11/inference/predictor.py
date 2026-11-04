@@ -11,23 +11,11 @@ import torch
 from yolo11.data.augment import LetterBox
 from yolo11.postprocessing.nms import non_max_suppression
 from yolo11.utils.bbox_utils import scale_boxes
-from yolo11.utils.torch_utils import check_imgsz, load_checkpoint
+from yolo11.utils.torch_utils import check_imgsz, load_checkpoint, select_device
 
 LOGGER = logging.getLogger(__name__)
 
 IMG_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
-
-
-def resolve_device(device: str | int | None = None) -> torch.device:
-    """Map ``None`` / ``'cpu'`` / ``'0'`` / ``'cuda:0'`` to a ``torch.device``, falling back to CPU without CUDA."""
-    if device in (None, ""):
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    device = str(device).lower()
-    if device == "cpu" or not torch.cuda.is_available():
-        if device != "cpu":
-            LOGGER.warning(f"CUDA requested ('{device}') but not available, using CPU.")
-        return torch.device("cpu")
-    return torch.device(f"cuda:{device}" if device.isdigit() else device)
 
 
 class Predictor:
@@ -53,7 +41,7 @@ class Predictor:
         classes: list[int] | None = None,
         agnostic: bool = False,
     ):
-        self.device = resolve_device(device)
+        self.device = select_device(device)
         self.model = load_checkpoint(weights, device=self.device, fuse=True)[0]
         self.half = half and self.device.type != "cpu"
         self.model = self.model.half() if self.half else self.model.float()

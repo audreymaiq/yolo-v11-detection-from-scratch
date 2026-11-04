@@ -8,12 +8,11 @@ import torch
 import torchvision
 import time
 import json
-import re
 import os
 
 from yolo11.data.yolo_dataset import build_yolo_dataset
 from yolo11.data.dataloader import build_dataloader
-from yolo11.utils.torch_utils import check_imgsz, load_checkpoint
+from yolo11.utils.torch_utils import check_imgsz, load_checkpoint, select_device
 from yolo11.data.config import load_data_config
 from yolo11.registry.metric_registry import MetricRegistry
 from yolo11.utils.bbox_utils import xywh2xyxy, box_iou
@@ -88,15 +87,7 @@ class DetectionValidator:
             self.loss = torch.zeros_like(trainer.loss_items, device=trainer.device)
             model.eval()
         else:
-            device_str = str(getattr(self.args, 'device', 'cuda:0' if torch.cuda.is_available() else 'cpu'))  # Fallback
-            if device_str.lower() == 'cpu':
-                self.device = torch.device('cpu')
-            elif torch.backends.mps.is_available() and 'mps' in device_str.lower():
-                self.device = torch.device('mps')
-            else:
-                # Extract numeric ID (handles 'cuda:0', '0', 'cuda', '')
-                device_id = re.sub(r'\D', '', device_str) or '0'  # Non-digits → '', default '0'
-                self.device = torch.device(f'cuda:{device_id}')
+            self.device = select_device(getattr(self.args, 'device', None))
             if isinstance(model, (str, Path)):
                 if not str(model).endswith(".pt"):
                     raise NotImplementedError("Only .pt models are supported.")

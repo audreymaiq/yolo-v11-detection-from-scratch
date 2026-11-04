@@ -215,6 +215,37 @@ def fuse_deconv_and_bn(deconv, bn):
 
     return deconv.requires_grad_(False)
 
+def select_device(device: str | int | torch.device | None = None) -> torch.device:
+    """Resolve a device spec to a ``torch.device``.
+
+    Accepts ``None``/``""`` (CUDA:0 if available, else CPU), ``"cpu"``, ``"mps"``, or a single CUDA device given as
+    ``0``, ``"0"``, ``"cuda"`` or ``"cuda:0"``. Requesting a device that is not available raises ``ValueError``
+    instead of silently falling back to another device.
+    """
+    if isinstance(device, torch.device):
+        return device
+    spec = "" if device is None else str(device).strip().lower()
+    if spec in ("", "none"):
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if spec == "cpu":
+        return torch.device("cpu")
+    if spec == "mps":
+        if not torch.backends.mps.is_available():
+            raise ValueError("Device 'mps' requested but MPS is not available.")
+        return torch.device("mps")
+    index = spec.removeprefix("cuda").removeprefix(":") or "0"
+    if not index.isdigit():
+        raise ValueError(
+            f"Invalid device '{device}'. Use 'cpu', 'mps' or one CUDA device such as 0 or 'cuda:0' "
+            "(multi-GPU training is not supported)."
+        )
+    if not torch.cuda.is_available() or int(index) >= torch.cuda.device_count():
+        raise ValueError(
+            f"CUDA device {index} requested but {torch.cuda.device_count()} CUDA device(s) are available. "
+            "Use device='cpu' to run on CPU."
+        )
+    return torch.device(f"cuda:{index}")
+
 def autocast(enabled=True, device="cuda"):
     """Simple AMP autocast context (for PyTorch ≥ 1.13)."""
     return torch.amp.autocast(device_type=device, enabled=enabled)

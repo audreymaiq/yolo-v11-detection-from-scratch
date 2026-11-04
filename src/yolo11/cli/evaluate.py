@@ -29,7 +29,6 @@ def run(args: argparse.Namespace) -> dict:
     import torch
 
     from yolo11.evaluation.validator import DetectionValidator
-    from yolo11.inference.predictor import resolve_device
 
     get_logger("yolo11")
     base = load_config(args.config) if args.config else {}
@@ -37,7 +36,7 @@ def run(args: argparse.Namespace) -> dict:
     cfg = {**base, **{k: v for k, v in options.items() if v is not None}}
     cfg.update(
         data=args.data, split=args.split, batch=args.batch, half=args.half, save_json=args.save_json,
-        workers=args.workers, rect=False, device=str(resolve_device(args.device)), save_dir=args.save_dir,
+        workers=args.workers, rect=False, device=args.device, save_dir=args.save_dir,
         name=None, plots=False, verbose=True,
     )
     cfg.setdefault("imgsz", 640)

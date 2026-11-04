@@ -7,9 +7,8 @@ from pathlib import Path
 
 import torch
 
-from yolo11.inference.predictor import resolve_device
 from yolo11.models.head import Detect
-from yolo11.utils.torch_utils import check_imgsz, load_checkpoint
+from yolo11.utils.torch_utils import check_imgsz, load_checkpoint, select_device
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ def export_model(
     """
     if fmt not in FORMATS:
         raise ValueError(f"Unsupported export format '{fmt}'. Choose from {FORMATS}.")
-    device = resolve_device(device)
+    device = select_device(device)
     half = half and device.type != "cpu"
 
     model = load_checkpoint(weights, device=device, fuse=True)[0]
