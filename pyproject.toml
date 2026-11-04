@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yolo11"
+version = "0.1.0"
+description = "YOLO11 object detection implemented in PyTorch: train, evaluate, predict, export."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "pillow>=9.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+    "matplotlib>=3.7",
+    "scipy>=1.10",
+    "polars>=0.20",
+]
+
+[project.optional-dependencies]
+export = ["onnx>=1.14", "onnxsim", "onnxruntime>=1.15"]
+tracking = ["mlflow>=2.5", "wandb>=0.15"]
+dev = ["pytest>=7.4", "ruff"]
+
+[project.scripts]
+yolo11 = "yolo11.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+yolo11 = ["models/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
