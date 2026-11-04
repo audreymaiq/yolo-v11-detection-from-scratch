@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from yolo11.cli.main import main
+from yolo11.models.model import DetectionModel
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope="module")
 def run_dir(tiny_dataset, tmp_path_factory):
     out = tmp_path_factory.mktemp("runs")
-    cfg = yaml.safe_load((ROOT / "configs" / "debug.yaml").read_text())
+    cfg = yaml.safe_load((ROOT / "configs" / "training.yaml").read_text())
     cfg.update(
         data=str(tiny_dataset), save_dir=str(out), name="e2e", epochs=1, batch=2, imgsz=64, workers=0,
         device="cpu", amp=False, cache=False, plots=False, close_mosaic=0, save_period=0, model="yolov11n",
@@ -21,7 +22,13 @@ def run_dir(tiny_dataset, tmp_path_factory):
     )
     cfg_path = out / "cfg.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg))
-    assert main(["train", "--config", str(cfg_path)]) == 0
+
+    def no_tta(self, x):
+        raise AssertionError("test-time augmentation must not run during training or its final evaluation")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(DetectionModel, "_predict_augment", no_tta)
+        assert main(["train", "--config", str(cfg_path)]) == 0
     return out / "e2e"
 
 

@@ -33,7 +33,7 @@ def build_yolo_dataset(
         img_path=img_path,
         imgsz=cfg.imgsz,
         batch_size=batch,
-        augment=mode == "train" and getattr(cfg, "augment", True),
+        augment=mode == "train",  # per-transform probabilities (mosaic, mixup, hsv_*, ...) control strength
         hyp=cfg,
         rect=getattr(cfg, "rect", False) or rect,
         cache=getattr(cfg, "cache", False) or None,

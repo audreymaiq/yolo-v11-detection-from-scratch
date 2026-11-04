@@ -51,6 +51,17 @@ def test_partial_mosaic_samples_share_keys_and_collate(tiny_dataset):
         assert batch["img"].shape == (4, 3, 64, 64)
 
 
+def test_training_augmentation_follows_mode_not_tta_flag(tiny_dataset):
+    from types import SimpleNamespace
+
+    from yolo11.data.yolo_dataset import build_yolo_dataset
+
+    data = load_data_config(tiny_dataset)
+    cfg = SimpleNamespace(imgsz=64, augment=False, mosaic=0.0, mixup=0.0, cutmix=0.0)  # augment = TTA flag
+    assert build_yolo_dataset(cfg, data["train"], 2, data, mode="train").augment
+    assert not build_yolo_dataset(cfg, data["val"], 2, data, mode="val").augment
+
+
 def test_dataset_item(tiny_dataset):
     from yolo11.data.yolo_dataset import YOLODataset
 
