@@ -1,0 +1,24 @@
+# Runtime dependencies. Prefer `pip install -e .` (see pyproject.toml); this file mirrors it for plain pip users.
+torch>=2.0
+torchvision>=0.15
+numpy>=1.24
+opencv-python>=4.8
+pillow>=9.0
+pyyaml>=6.0
+tqdm>=4.65
+matplotlib>=3.7
+scipy>=1.10
+polars>=0.20
+
+# Optional: export (`pip install -e .[export]`)
+# onnx>=1.14
+# onnxsim
+# onnxruntime>=1.15
+
+# Optional: experiment tracking (`pip install -e .[tracking]`)
+# mlflow>=2.5
+# wandb>=0.15
+
+# Development
+# pytest>=7.4
+# ruff
