@@ -62,6 +62,20 @@ def test_training_augmentation_follows_mode_not_tta_flag(tiny_dataset):
     assert not build_yolo_dataset(cfg, data["val"], 2, data, mode="val").augment
 
 
+def test_polygon_labels_become_boxes(tmp_path):
+    import cv2
+    import numpy as np
+
+    from yolo11.data.yolo_dataset import verify_image_label
+
+    img, lbl = tmp_path / "a.jpg", tmp_path / "a.txt"
+    cv2.imwrite(str(img), np.zeros((32, 32, 3), np.uint8))
+    lbl.write_text("1 0.1 0.2 0.5 0.2 0.5 0.6 0.1 0.6\n0 0.4 0.4 0.6 0.4 0.6 0.6 0.4 0.6\n")  # two polygons
+    im_file, lb, *_, msg = verify_image_label((str(img), str(lbl), "", 2, False))
+    assert im_file == str(img), msg  # image kept, not reported as corrupt
+    np.testing.assert_allclose(lb, [[1, 0.3, 0.4, 0.4, 0.4], [0, 0.5, 0.5, 0.2, 0.2]], atol=1e-6)  # file order
+
+
 def test_dataset_item(tiny_dataset):
     from yolo11.data.yolo_dataset import YOLODataset
 

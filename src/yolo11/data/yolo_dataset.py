@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 
 from yolo11.data.augment import Compose, Format, LetterBox, v8_transforms
 from yolo11.data.preprocessor import Preprocessor, update_labels_info, Instances
+from yolo11.utils.bbox_utils import segments2boxes
 
 LOGGER = logging.getLogger(__name__)
 
@@ -337,6 +338,10 @@ def verify_image_label(args: tuple) -> list:
             nf = 1
             with open(lb_file, encoding="utf-8") as f:
                 lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                if any(len(x) > 6 for x in lb):  # polygon (segmentation) labels: use their bounding boxes
+                    classes = np.array([x[0] for x in lb], dtype=np.float32)
+                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]
+                    lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)
                 lb = np.array(lb, dtype=np.float32)
             if nl := len(lb):
                 assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"

@@ -249,6 +249,11 @@ def xywh2xyxy(x):
     y[..., 2:] = xy + wh  # bottom right xy
     return y
 
+def segments2boxes(segments: list[np.ndarray]) -> np.ndarray:
+    """Convert polygons, each an (N, 2) array of xy points, to their bounding boxes in xywh format."""
+    boxes = [[s[:, 0].min(), s[:, 1].min(), s[:, 0].max(), s[:, 1].max()] for s in segments]
+    return xyxy2xywh(np.array(boxes, dtype=np.float32))
+
 def empty_like(x):
     """Create empty torch.Tensor or np.ndarray with same shape as input and float32 dtype."""
     return (
