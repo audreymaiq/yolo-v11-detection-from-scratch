@@ -19,12 +19,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False, pad_value=114):
     # 1. Mosaic Check
     mosaic_prob = get_hyp("mosaic")
     use_mosaic = mosaic_prob > 0.0
-    if use_mosaic:
-        mosaic_border = [-imgsz // 2, -imgsz // 2]
-        mosaic = Mosaic(dataset, imgsz=imgsz, p=mosaic_prob, pad_value=pad_value)
-    else:
-        mosaic_border = [0, 0]
-        mosaic = None
+    mosaic = Mosaic(dataset, imgsz=imgsz, p=mosaic_prob, pad_value=pad_value) if use_mosaic else None
 
     # 2. Affine Transforms
     scale_raw = get_hyp("scale", 0.5)
@@ -35,7 +30,6 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False, pad_value=114):
         scale=aug_scale,
         shear=get_hyp("shear"),
         perspective=get_hyp("perspective"),
-        border=mosaic_border,
         pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz), padding_value=pad_value),
         pad_val=pad_value,
     )
@@ -421,19 +415,16 @@ class Mosaic(BaseMixTransform):
             instances.convert_bbox("xyxy")
             cls.append(torch.tensor(lab['cls']))
             bboxes.append(instances.bboxes)
+        boxes = torch.clamp(torch.from_numpy(np.concatenate(bboxes, 0)), 0, imgsz)
+        good = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) > 0
         final_labels = {
             'im_file': mosaic_labels[0].get('im_file', None),
             'ori_shape': mosaic_labels[0].get('ori_shape', None),
-            'cls': torch.cat(cls, 0),
-            'bboxes': torch.from_numpy(np.concatenate(bboxes, 0)),
-            'mosaic_border': self.border,
+            'resized_shape': (imgsz, imgsz),
+            'cls': torch.cat(cls, 0)[good],
+            'mosaic_border': self.border,  # consumed by RandomPerspective
         }
-        final_labels['bboxes'] = torch.clamp(final_labels['bboxes'], 0, imgsz)
-        areas = (final_labels['bboxes'][:, 2] - final_labels['bboxes'][:, 0]) * (final_labels['bboxes'][:, 3] - final_labels['bboxes'][:, 1])
-        good = areas > 0
-        final_labels['bboxes'] = final_labels['bboxes'][good]
-        final_labels['cls'] = final_labels['cls'][good]
-        instances = Instances(final_labels['bboxes'].numpy(), bbox_format="xyxy", normalized=False)
+        instances = Instances(boxes[good].numpy(), bbox_format="xyxy", normalized=False)
         instances.convert_bbox("xywh")
         instances.normalize(imgsz, imgsz)
         final_labels['instances'] = instances
@@ -643,22 +634,26 @@ class RandomPerspective(BaseTransform):
         self.pre_transform_shape = None
 
     def __call__(self, labels):
+        """Warp image and boxes; mosaic and non-mosaic samples leave with the same keys."""
         if self.pre_transform and "mosaic_border" not in labels:
             labels = self.pre_transform(labels)
-        super().__call__(labels)
+        labels.pop("ratio_pad", None)  # only meaningful for un-augmented (val) images
+        border = labels.pop("mosaic_border", self.border)
+        self.apply_image(labels, border)
+        self.apply_instances(labels)
+        labels.pop("M", None)
+        labels.pop("scale", None)
+        labels["resized_shape"] = labels["img"].shape[:2]
         return labels
 
-    def apply_image(self, labels):
-        """Apply affine to img with correct Mosaic cropping logic."""
+    def apply_image(self, labels, border=(0, 0)):
+        """Apply affine to img; ``border`` is negative for a 2x mosaic canvas to crop it back to imgsz."""
         img = labels["img"]
         height, width = img.shape[:2]
-        
+
         self.pre_transform_shape = (height, width)
 
-        if "mosaic_border" in labels:
-            border = self.border
-        else:
-            border = (0, 0)
+        border = tuple(border)
         # Center determination
         C = np.eye(3, dtype=np.float32)
         C[0, 2] = -width / 2
@@ -752,16 +747,6 @@ class RandomPerspective(BaseTransform):
                 instances.normalize(target_w, target_h)
             instances.remove_zero_area_boxes()
             
-        return labels
-
-    def __call__(self, labels):
-        """Apply transform to labels."""
-        if self.pre_transform and "mosaic_border" not in labels:
-            labels = self.pre_transform(labels)
-        self.apply_image(labels)
-        self.apply_instances(labels)
-        labels.pop("M", None)
-        labels.pop("scale", None)
         return labels
 
     @staticmethod
