@@ -26,7 +26,6 @@ freeze: # (int | list) Freeze the first N layers or specific layer indices.
 # TRAINING
 resume: false # (bool | str) false = new run; or path to weights/last.pt to resume (also: --resume).
 epochs: 500 # (int) Total number of training epochs.
-time: # (float) Maximum training time in hours.
 patience: 100 # (int) Epochs to wait for no improvement in mAP50-95 before early stopping.
 nbs: 64 # (int) Nominal batch size. Used to calculate gradient accumulation steps (accumulate = nbs / batch).
 
@@ -65,7 +64,6 @@ hsv_h: 0.015 # (float) HSV Hue augmentation fraction.
 hsv_s: 0.7 # (float) HSV Saturation augmentation fraction.
 hsv_v: 0.4 # (float) HSV Value (Brightness) augmentation fraction.
 grayscale: 0.01 # (float) Probability of converting image to grayscale.
-bgr: 0.0 # (float) Probability of swapping image channels (RGB <-> BGR).
 
 # Orientation
 flipud: 0.0 # (float) Probability of vertical flip.
@@ -86,41 +84,15 @@ conf: 0.001 # (float) Confidence threshold for object detection.
 iou: 0.7 # (float) IoU threshold for Non-Maximum Suppression (NMS).
 max_det: 300 # (int) Maximum number of detections per image.
 augment: False # (bool) Test-time augmentation (flips + scales) when validating. Training augmentation is always on and set by the DATA AUGMENTATION probabilities.
+agnostic_nms: False # (bool) Method for NMS (Class-agnostic vs Class-specific).
+classes: # (list) Keep only these class IDs in the train/val labels (others are dropped).
 half: False # (bool) Use FP16 half-precision for validation inference.
-dnn: False # (bool) Use OpenCV DNN module for ONNX inference.
 
 # LOGGING & ARTIFACTS
 save_dir: runs # (str) Directory for saving checkpoints and logs.
-save: True # (bool) save train checkpoints and predict results
+save: True # (bool) Save training checkpoints.
 save_period: 5 # (int) Frequency of saving checkpoints in epochs (0 = save only best/last).
 plots: True # (bool) Generate and save training plots and debug images.
-visualize: False # (bool) Visualize intermediate feature maps.
 save_json: True # (bool) Save validation results to COCO JSON format.
 save_txt: False # (bool) Save detection results to text files.
 save_conf: False # (bool) Save confidence scores in text files.
-save_crop: False # (bool) Save cropped images of detections.
-
-# LEGACY / PREDICT SETTINGS
-source: # (str) Input source for prediction.
-vid_stride: 1 # (int) Step size for video frames.
-stream_buffer: False # (bool) Buffer strategy for streams.
-agnostic_nms: False # (bool) Method for NMS (Class-agnostic vs Class-specific).
-classes: # (list) Filter predictions by class ID.
-embed: # (list) Indices of layers to extract embeddings from.
-show: False # (bool) Display inference results on screen.
-save_frames: False # (bool) Save video frames as images.
-show_labels: True # (bool) Draw class labels on output images.
-show_conf: True # (bool) Draw confidence scores on output images.
-show_boxes: True # (bool) Draw bounding boxes on output images.
-line_width: # (int) Line thickness for bounding boxes.
-
-# EXPORT SETTINGS
-format: torchscript # (str) Target format for model export.
-keras: False # (bool) Use Keras format (SavedModel).
-optimize: False # (bool) Optimize TorchScript for mobile.
-int8: False # (bool) Quantization to INT8.
-dynamic: False # (bool) Enable dynamic axes for ONNX/TensorRT.
-simplify: True # (bool) Apply ONNX simplification.
-opset: # (int) ONNX opset version.
-workspace: # (int) TensorRT workspace size in GB.
-nms: False # (bool) Add NMS post-processing to CoreML model.
