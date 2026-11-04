@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Experiment outputs and data
+runs/
+logs/
+datasets/
+*.pt
+*.onnx
+*.torchscript
+*.cache
