@@ -1,7 +1,7 @@
 # HARDWARE & SYSTEM
 seed: 42 # (int) Random seed for initialization of torch, numpy, and random.
 deterministic: True # (bool) Enable deterministic algorithms (cudnn.benchmark=False, cudnn.deterministic=True).
-device: # (int | str | list) Device selection. Examples: 0, [0,1], cpu.
+device: # (int | str) One device: empty = cuda:0 if available else cpu; or 0, cuda:0, cpu, mps.
 workers: 2 # (int) Number of subprocesses for data loading. Capped by os.cpu_count() and batch size.
 amp: True # (bool) Enable Automatic Mixed Precision (FP16) for training.
 compile: False # (bool) Enable torch.compile() backend.
