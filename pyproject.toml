@@ -33,7 +33,7 @@ yolo11 = "yolo11.cli.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-yolo11 = ["models/*.yaml"]
+yolo11 = ["models/*.yaml", "cfg/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

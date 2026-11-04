@@ -3,6 +3,7 @@ import json
 import logging
 from pathlib import Path
 
+from yolo11.cfg import DEFAULT_CFG_DICT
 from yolo11.utils.config import load_config
 from yolo11.utils.logger import get_logger
 
@@ -31,7 +32,7 @@ def run(args: argparse.Namespace) -> dict:
     from yolo11.evaluation.validator import DetectionValidator
 
     get_logger("yolo11")
-    base = load_config(args.config) if args.config else {}
+    base = load_config(args.config) if args.config else dict(DEFAULT_CFG_DICT)
     options = {"imgsz": args.imgsz, "conf": args.conf, "iou": args.iou, "max_det": args.max_det}
     cfg = {**base, **{k: v for k, v in options.items() if v is not None}}
     cfg.update(
@@ -39,11 +40,6 @@ def run(args: argparse.Namespace) -> dict:
         workers=args.workers, rect=False, device=args.device, save_dir=args.save_dir,
         name=None, plots=False, verbose=True,
     )
-    cfg.setdefault("imgsz", 640)
-    cfg.setdefault("conf", 0.001)
-    cfg.setdefault("iou", 0.7)
-    cfg.setdefault("max_det", 300)
-
     validator = DetectionValidator(save_dir=Path(args.save_dir), args=cfg)
     with torch.no_grad():
         stats = validator(model=args.weights)

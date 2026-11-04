@@ -14,13 +14,12 @@ from datetime import datetime
 import torch.distributed as dist
 from contextlib import contextmanager
 
+from yolo11.cfg import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS
 from yolo11.utils.legacy import install_legacy_aliases
 
 LOGGER = logging.getLogger(__name__)
 __version__ = "0.1.0"
 
-DEFAULT_CFG_DICT = {}
-DEFAULT_CFG_KEYS = []
 
 class ModelEMA:
     """Updated Exponential Moving Average (EMA) implementation.

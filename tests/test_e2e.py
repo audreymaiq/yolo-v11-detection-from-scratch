@@ -37,6 +37,16 @@ def test_train_writes_checkpoints(run_dir):
     assert (run_dir / "results.csv").is_file()
 
 
+def test_final_checkpoints_keep_training_args(run_dir):
+    from yolo11.inference.predictor import Predictor
+    from yolo11.utils.torch_utils import load_checkpoint
+
+    for name in ("best.pt", "last.pt"):  # both are stripped after training
+        model = load_checkpoint(run_dir / "weights" / name)[0]
+        assert model.args["imgsz"] == 64
+    assert Predictor(run_dir / "weights" / "best.pt", device="cpu").imgsz == 64  # no --imgsz needed
+
+
 def test_val(run_dir, tiny_dataset, tmp_path):
     out = tmp_path / "metrics.json"
     main([
