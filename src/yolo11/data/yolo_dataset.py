@@ -136,12 +136,15 @@ class YOLODataset(Dataset):
         results = []
         for args in zip(self.im_files, self.label_files, repeat(self.prefix), repeat(len(self.data["names"])), repeat(self.single_cls)):
             results.append(verify_image_label(args))
+        msgs = []
         pbar = TQDM.tqdm(results, desc=desc, total=total)
-        for im_file, lb, shape, nm_f, nf_f, ne_f, nc_f, _ in pbar:
+        for im_file, lb, shape, nm_f, nf_f, ne_f, nc_f, msg in pbar:
             nm += nm_f
             nf += nf_f
             ne += ne_f
             nc += nc_f
+            if msg:
+                msgs.append(msg)
             if im_file:
                 x["labels"].append({
                     "im_file": im_file,
@@ -153,40 +156,20 @@ class YOLODataset(Dataset):
                 })
             pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
         pbar.close()
-        size = 0
-        for p in self.label_files + self.im_files:
-            try:
-                size += os.stat(p).st_size
-            except OSError:
-                continue
-        h = hashlib.sha256(str(size).encode())
-        h.update("".join(self.label_files + self.im_files).encode())
-        x["hash"] = h.hexdigest()
+        if msgs:
+            LOGGER.warning("\n".join(msgs))
+        x["hash"] = get_hash(self.label_files + self.im_files)
         x["results"] = nf, nm, ne, nc, len(self.im_files)
-        np.save(path, x, allow_pickle=True)
+        save_cache_file(path, x)
         return x
-    
+
     def get_labels(self) -> list[dict]:
         """Get labels"""
         self.label_files = img2label_paths(self.im_files)
         cache_path = Path(self.label_files[0]).parent.with_suffix(".cache")
         try:
-            # Inline load_dataset_cache_file
-            gc.disable()
-            cache = np.load(str(cache_path), allow_pickle=True).item()
-            gc.enable()
-
-            # Inline get_hash để check
-            size = 0
-            for p in self.label_files + self.im_files:
-                try:
-                    size += os.stat(p).st_size
-                except OSError:
-                    continue
-            h = hashlib.sha256(str(size).encode())
-            h.update("".join(self.label_files + self.im_files).encode())
-            assert cache["hash"] == h.hexdigest()  # chỉ giữ hash check
-
+            cache = load_cache_file(cache_path)
+            assert cache["hash"] == get_hash(self.label_files + self.im_files)  # dataset unchanged
             exists = True
         except Exception:
             cache = self.cache_labels(cache_path)
@@ -293,6 +276,39 @@ class YOLODataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.labels)
+
+def get_hash(paths: list[str]) -> str:
+    """Hash file paths together with each file's size and modification time."""
+    h = hashlib.sha256()
+    for p in paths:
+        h.update(os.fsencode(p) + b"\0")
+        try:
+            st = os.stat(p)
+            h.update(f"{st.st_size}:{st.st_mtime_ns}".encode())
+        except OSError:
+            pass
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def load_cache_file(path: Path) -> dict:
+    """Load a ``*.cache`` dict saved by ``save_cache_file``."""
+    gc.disable()  # faster unpickling of many small objects
+    try:
+        return np.load(str(path), allow_pickle=True).item()
+    finally:
+        gc.enable()  # also when loading fails, e.g. on the first run when no cache exists yet
+
+
+def save_cache_file(path: Path, x: dict) -> None:
+    """Save ``x`` to exactly ``path``; ``np.save`` given a filename would append ``.npy``."""
+    try:
+        with open(path, "wb") as f:
+            np.save(f, x, allow_pickle=True)
+    except OSError as e:
+        Path(path).unlink(missing_ok=True)  # do not leave a partially written cache
+        LOGGER.warning(f"Cache not saved to {path}: {e}")
+
 
 def img2label_paths(img_paths: list[str]) -> list[str]:
     """Convert image paths to label paths by replacing 'images' with 'labels' and extension with '.txt'."""
