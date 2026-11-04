@@ -699,7 +699,7 @@ class RandomPerspective(BaseTransform):
         if "instances" not in labels or len(labels["instances"].bboxes) == 0:
             return labels
         M = labels.pop("M")
-        labels.pop("scale", None)
+        s = labels.pop("scale", 1.0)
         instances = labels["instances"]
         was_normalized = instances.normalized
         if self.pre_transform_shape is not None:
@@ -726,8 +726,9 @@ class RandomPerspective(BaseTransform):
             new_bboxes[:, [0, 2]] = new_bboxes[:, [0, 2]].clip(0, target_w)
             new_bboxes[:, [1, 3]] = new_bboxes[:, [1, 3]].clip(0, target_h)
 
-            # Filter candidates
-            i = RandomPerspective.box_candidates(bboxes.T, new_bboxes.T)
+            # Filter candidates against the source boxes at the sampled scale, so zooming out alone
+            # does not count as losing area; only clipping/distortion does
+            i = RandomPerspective.box_candidates(bboxes.T * s, new_bboxes.T)
             
             instances.update(new_bboxes[i])
             labels["cls"] = labels["cls"][i]
