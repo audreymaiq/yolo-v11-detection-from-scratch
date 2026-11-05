@@ -1,7 +1,6 @@
 import math
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 def make_anchors(feats, strides, grid_cell_offset=0.5):
     """Generate anchors from features."""
