@@ -5,14 +5,14 @@ import torch
 import torch.nn as nn
 from copy import deepcopy
 
-LOGGER = logging.getLogger(__name__)
-
 from yolo11.models.conv  import Conv, DWConv, Concat
 from yolo11.models.blocks import C2PSA, C3k2, SPPF
 from yolo11.models.head import Detect
 from yolo11.utils.torch_utils import fuse_conv_and_bn, intersect_dicts, model_info, yaml_model_load, make_divisible, time_sync
 from yolo11.data.preprocessor import scale_img
 from yolo11.utils.visualize_utils import feature_visualization
+
+LOGGER = logging.getLogger(__name__)
 
 def initialize_weights(model):
     """Initialize model weights to random values."""
@@ -211,7 +211,8 @@ class DetectionModel(torch.nn.Module):
             LOGGER.info("")
         args = getattr(self, 'args', None)
         pad_color_int = getattr(args, 'pad_color', 114) if args else 114
-        if pad_color_int is None: pad_color_int = 114
+        if pad_color_int is None:
+            pad_color_int = 114
         self.pad_val = pad_color_int / 255.0
 
     def forward(self, x, *args, **kwargs):
