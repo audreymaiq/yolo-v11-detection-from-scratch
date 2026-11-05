@@ -106,6 +106,28 @@ def test_export_onnx_matches_torch(run_dir, tmp_path):
     assert np.allclose(got, want, atol=1e-3)
 
 
+def test_dynamic_onnx_runs_other_shapes(run_dir, tmp_path):
+    ort = pytest.importorskip("onnxruntime")
+    import numpy as np
+    import torch
+
+    from yolo11.utils.torch_utils import load_checkpoint
+
+    out = tmp_path / "dynamic.onnx"
+    main(["export", "--weights", str(run_dir / "weights" / "last.pt"), "--format", "onnx", "--imgsz", "64",
+          "--dynamic", "--output", str(out)])
+    session = ort.InferenceSession(str(out))
+    model = load_checkpoint(run_dir / "weights" / "last.pt", fuse=True)[0].eval()
+    model.model[-1].export = True
+    for shape in [(1, 3, 64, 64), (2, 3, 96, 128)]:  # the export size and a different batch and size
+        x = np.random.rand(*shape).astype("float32")
+        got = session.run(None, {"images": x})[0]
+        with torch.no_grad():
+            want = model(torch.from_numpy(x)).numpy()
+        assert got.shape == want.shape
+        assert np.allclose(got, want, atol=1e-3)
+
+
 def test_export_torchscript(run_dir, tmp_path):
     out = tmp_path / "m.torchscript"
     main(["export", "--weights", str(run_dir / "weights" / "last.pt"), "--format", "torchscript", "--imgsz", "64",
