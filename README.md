@@ -26,8 +26,9 @@ yolo11 val --weights runs/COCO2017/weights/best.pt --data datasets/COCO2017/data
 # Predict on an image or a folder
 yolo11 predict --weights runs/COCO2017/weights/best.pt --source path/to/images --conf 0.25
 
-# Export
+# Export, then predict with the exported model
 yolo11 export --weights runs/COCO2017/weights/best.pt --format onnx --simplify
+yolo11 predict --weights runs/COCO2017/weights/best.onnx --source path/to/images --batch 8
 
 # COCO json -> YOLO labels
 yolo11 convert-coco --json annotations/instances_val2017.json --output labels/val2017
@@ -46,7 +47,7 @@ src/yolo11/
   data/             dataset, dataloader, augmentations, COCO converter
   training/         trainer, losses, TaskAlignedAssigner, optimizers
   evaluation/       validator, mAP metrics, results containers
-  inference/        Predictor
+  inference/        Predictor and backends for .pt, .onnx and .torchscript models
   export/           ONNX / TorchScript exporter
   postprocessing/   NMS
   registry/         model / loss / optimizer / metric registries
@@ -60,8 +61,13 @@ runs/               training outputs (git-ignored)
 
 - Checkpoints saved before the package was renamed from `sgod_model_builder` to `yolo11` still load
   (see `yolo11/utils/legacy.py`).
-- Exported ONNX/TorchScript models output raw `(B, 4+nc, N)` predictions (xywh pixels + class scores); apply NMS
-  afterwards. A `<model>.json` next to the export holds class names and input size.
+- `yolo11 predict` and `yolo11.inference.Predictor` run `.pt`, `.onnx` and `.torchscript` models with the same
+  preprocessing and NMS. ONNX needs `pip install -e ".[export]"` (onnxruntime); CUDA is used when onnxruntime has it.
+- Exported models output raw `(B, 4+nc, N)` predictions (xywh pixels + class scores); NMS is not in the graph.
+  Class names, stride, input size, batch and export options are embedded in the file as JSON values (ONNX
+  `metadata_props`, TorchScript extra file `config.txt`). Exports without `--dynamic` only accept the exported batch
+  size and input size; `Predictor` pads images and batches to fit. Exports made before metadata was embedded are
+  still read from their `<model>.json`.
 
 ## License
 
