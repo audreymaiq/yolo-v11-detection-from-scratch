@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from yolo11.utils.bbox_utils import xyxy2xywh, clip_boxes
+from yolo11.utils.bbox_utils import xyxy2xywh
 
 
 class Boxes:
