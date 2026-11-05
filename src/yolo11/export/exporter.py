@@ -3,10 +3,13 @@
 import inspect
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import torch
 
+from yolo11 import __version__
+from yolo11.inference.backends import TORCHSCRIPT_METADATA
 from yolo11.models.head import Detect
 from yolo11.utils.torch_utils import check_imgsz, load_checkpoint, select_device
 
@@ -29,8 +32,10 @@ def export_model(
 ) -> Path:
     """Export ``weights`` and return the path of the written file.
 
-    The exported graph takes a ``(B, 3, H, W)`` RGB tensor scaled to ``[0, 1]`` and returns ``(B, 4 + nc, N)`` with
-    ``xywh`` boxes in input pixels followed by per-class sigmoid scores. NMS is *not* part of the graph.
+    The exported graph takes a ``(B, C, H, W)`` RGB (or grayscale) tensor scaled to ``[0, 1]`` and returns
+    ``(B, 4 + nc, N)`` with ``xywh`` boxes in input pixels followed by per-class sigmoid scores. NMS is *not* part of
+    the graph. Class names, stride, input size and export options are embedded in the file (ONNX
+    ``metadata_props``, TorchScript extra file ``config.txt``); ``yolo11.inference.Predictor`` reads them.
     """
     if fmt not in FORMATS:
         raise ValueError(f"Unsupported export format '{fmt}'. Choose from {FORMATS}.")
@@ -52,7 +57,8 @@ def export_model(
     train_imgsz = (getattr(model, "args", None) or {}).get("imgsz")
     imgsz = check_imgsz(imgsz or train_imgsz or 640, stride=stride, max_dim=2)
     h, w = (imgsz, imgsz) if isinstance(imgsz, int) else imgsz
-    im = torch.zeros(batch, 3, h, w, device=device, dtype=torch.half if half else torch.float)
+    channels = int(getattr(model, "yaml", {}).get("channels", 3))
+    im = torch.zeros(batch, channels, h, w, device=device, dtype=torch.half if half else torch.float)
     with torch.no_grad():
         for _ in range(2):  # dry runs build anchors and catch shape errors before export
             y = model(im)
@@ -65,19 +71,33 @@ def export_model(
         output = output / weights.with_suffix(ext).name
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    if fmt == "onnx":
-        _export_onnx(model, im, output, opset, dynamic, simplify)
-    else:
-        torch.jit.trace(model, im, strict=False).save(str(output))
-
     names = getattr(model, "names", {})
-    meta = {"names": dict(enumerate(names)) if isinstance(names, (list, tuple)) else names, "imgsz": [h, w], "stride": stride}
-    output.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    metadata = {
+        "description": f"YOLO11 detection model exported from {weights.name}",
+        "version": __version__,
+        "date": datetime.now().astimezone().isoformat(),
+        "license": "AGPL-3.0",
+        "task": "detect",
+        "stride": stride,
+        "batch": batch,
+        "imgsz": [h, w],
+        "channels": channels,
+        "names": dict(enumerate(names)) if isinstance(names, (list, tuple)) else dict(names),
+        "dynamic": dynamic,
+        "half": half,
+    }
+    if fmt == "onnx":
+        _export_onnx(model, im, output, opset, dynamic, simplify, metadata)
+    else:
+        ts = torch.jit.trace(model, im, strict=False)
+        ts.save(str(output), _extra_files={TORCHSCRIPT_METADATA: json.dumps(metadata, ensure_ascii=False)})
     LOGGER.info(f"Exported {weights} -> {output} ({output.stat().st_size / 1e6:.1f} MB)")
     return output
 
 
-def _export_onnx(model, im, output: Path, opset: int, dynamic: bool, simplify: bool) -> None:
+def _export_onnx(model, im, output: Path, opset: int, dynamic: bool, simplify: bool, metadata: dict) -> None:
+    import onnx
+
     dynamic_axes = None
     if dynamic:
         dynamic_axes = {"images": {0: "batch", 2: "height", 3: "width"}, "output0": {0: "batch", 2: "anchors"}}
@@ -92,15 +112,19 @@ def _export_onnx(model, im, output: Path, opset: int, dynamic: bool, simplify: b
         dynamic_axes=dynamic_axes,
         **kwargs,
     )
+    model_onnx = onnx.load(str(output))
     if simplify:
         try:
-            import onnx
             import onnxsim
 
-            model_onnx, ok = onnxsim.simplify(onnx.load(str(output)))
+            simplified, ok = onnxsim.simplify(model_onnx)
             if ok:
-                onnx.save(model_onnx, str(output))
+                model_onnx = simplified
             else:
                 LOGGER.warning("onnxsim could not validate the simplified model; keeping the original.")
         except ImportError:
             LOGGER.warning("`onnxsim` is not installed; skipping simplification (pip install onnxsim).")
+    for key, value in metadata.items():  # JSON values, readable from any language through the ONNX model metadata
+        prop = model_onnx.metadata_props.add()
+        prop.key, prop.value = key, json.dumps(value, ensure_ascii=False)
+    onnx.save(model_onnx, str(output))
