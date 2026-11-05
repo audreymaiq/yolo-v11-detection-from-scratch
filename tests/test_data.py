@@ -1,3 +1,5 @@
+import pytest
+
 from yolo11.data.config import load_data_config
 
 
@@ -85,3 +87,43 @@ def test_dataset_item(tiny_dataset):
     assert item["img"].shape == (3, 64, 64)
     assert item["cls"].shape[1] == 1 and item["bboxes"].shape[1] == 4
     assert len(ds) == 4
+
+
+def test_truncated_jpeg_is_restored_without_touching_hard_links(tmp_path):
+    import os
+    from PIL import Image
+    from yolo11.data.yolo_dataset import verify_image_label
+
+    image = tmp_path / "bad.jpg"
+    label = tmp_path / "bad.txt"
+    Image.new("RGB", (32, 32)).save(image)
+    contents = image.read_bytes() + b"\x00\x00"  # trailing bytes after the end marker, image data intact
+    image.write_bytes(contents)
+    linked = tmp_path / "linked.jpg"
+    os.link(image, linked)
+    label.write_text("", encoding="utf-8")
+
+    result = verify_image_label((str(image), str(label), "", 1, False))
+    assert result[0] == str(image)
+    assert result[6] == 0  # corrupt count: the image is kept
+    assert "corrupt JPEG restored and saved" in result[7]
+    assert image.read_bytes().endswith(b"\xff\xd9")
+    assert linked.read_bytes() == contents  # the hard-linked original is left alone
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["bad.jpg", "bad.txt", "linked.jpg"]  # no temp file left
+
+
+@pytest.mark.parametrize("fmt", ["JPEG", "PNG", "WEBP"])
+@pytest.mark.parametrize("orientation", range(1, 9))
+def test_exif_size_matches_decoded_image(tmp_path, fmt, orientation):
+    import cv2
+    from PIL import Image
+    from yolo11.data.yolo_dataset import exif_size
+
+    path = tmp_path / f"image.{fmt.lower()}"
+    image = Image.new("RGB", (40, 20))
+    exif = image.getexif()
+    exif[274] = orientation
+    image.save(path, fmt, exif=exif.tobytes())
+    with Image.open(path) as im:
+        im.verify()
+        assert exif_size(im) == cv2.imread(str(path)).shape[1::-1]
