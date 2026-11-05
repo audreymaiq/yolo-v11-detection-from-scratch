@@ -1,176 +1,144 @@
+"""Convert COCO detection boxes to YOLO labels without modifying existing data."""
+
+from __future__ import annotations
 
 import json
-import os
-import shutil
-import sys
-from pathlib import Path
+import math
+import tempfile
+from collections import defaultdict
+from pathlib import Path, PurePosixPath
+from typing import Any
 
-def convert_coco_json(json_file, output_dir):
+
+def _label_name(file_name: str) -> Path:
+    if not isinstance(file_name, str) or not file_name or "\\" in file_name:
+        raise ValueError(f"Invalid COCO file_name: {file_name!r}")
+    path = PurePosixPath(file_name)
+    if path.is_absolute() or any(part in {".", ".."} or ":" in part for part in path.parts):
+        raise ValueError(f"Unsafe COCO file_name: {file_name!r}")
+    return Path(*path.with_suffix(".txt").parts)
+
+
+def _load_coco(json_file: str | Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    with open(json_file, encoding="utf-8") as source:
+        data = json.load(source)
+    if not isinstance(data, dict) or any(not isinstance(data.get(key), list) for key in ("images", "categories", "annotations")):
+        raise ValueError("COCO JSON must contain images, categories, and annotations lists")
+    images, categories, annotations = (data[key] for key in ("images", "categories", "annotations"))
+    if not images or not categories:
+        raise ValueError("COCO JSON must contain at least one image and one category")
+    return images, categories, annotations
+
+
+def convert_coco_json(json_file: str | Path, output_dir: str | Path, expected_count: int | None = None) -> dict[str, int]:
+    """Write a new label directory atomically; never overwrite an existing directory.
+
+    COCO categories are sorted by ID. Crowd and invalid boxes are skipped;
+    partially out-of-image boxes are clipped. Background images get empty files.
     """
-    Converts COCO JSON format to YOLO txt format with STRICT filtering.
-    """
-    save_dir = Path(output_dir)
-    if save_dir.exists():
-        shutil.rmtree(save_dir)
-    save_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Loading {json_file}...")
-    with open(json_file, 'r') as f:
-        data = json.load(f)
-        
-    # 1. Create Category Mapping (91 -> 80)
-    # Confirmed: Sorting by ID aligns with official YOLO 80 classes.
-    categories = sorted(data['categories'], key=lambda x: x['id'])
-    coco_id_to_yolo = {cat['id']: idx for idx, cat in enumerate(categories)}
-            
-    # 2. Index Images
-    images = {x['id']: x for x in data['images']}
-    print(f"Total Unique Images: {len(images)}")
-    
-    # 3. Group Annotations by Image & Filter
-    # Pre-scan annotations to filter duplicates and invalid ones
-    img_to_anns = {}
-    
-    stats = {
-        'total': 0,
-        'iscrowd': 0,
-        'invalid_dim': 0,
-        'tiny': 0,
-        'duplicates': 0,
-        'valid': 0
-    }
-    
-    seen_anns_per_img = {} # Key: (img_id, cat, x, y, w, h)
-    
-    for i, ann in enumerate(data['annotations']):
-        if i % 50000 == 0:
-            sys.stdout.write(f"\rFiltering annotations: {i}/{len(data['annotations'])}")
-            sys.stdout.flush()
-        stats['total'] += 1
-        img_id = ann['image_id']
-        
-        # 1. IsCrowd Check
-        if ann.get('iscrowd') == 1:
-            stats['iscrowd'] += 1
+    images, categories, annotations = _load_coco(json_file)
+    category_ids = [category["id"] for category in categories]
+    if len(set(category_ids)) != len(category_ids):
+        raise ValueError("Duplicate COCO category ID")
+    sorted_categories = sorted(categories, key=lambda category: category["id"])
+    class_ids = {category["id"]: index for index, category in enumerate(sorted_categories)}
+
+    image_info: dict[int, tuple[Path, int, int]] = {}
+    label_names: set[Path] = set()
+    for image in images:
+        image_id = image["id"]
+        if image_id in image_info:
+            raise ValueError(f"Duplicate COCO image ID: {image_id}")
+        label_name = _label_name(image["file_name"])
+        if label_name in label_names:
+            raise ValueError(f"Multiple images map to label file {label_name}")
+        width, height = image["width"], image["height"]
+        if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+            raise ValueError(f"Invalid image size for image ID {image_id}")
+        image_info[image_id] = label_name, width, height
+        label_names.add(label_name)
+    if expected_count is not None and expected_count != len(images):
+        raise ValueError(f"Expected {expected_count} images, COCO JSON contains {len(images)}")
+
+    labels: dict[int, list[str]] = defaultdict(list)
+    seen: dict[int, set[tuple[int, float, float, float, float]]] = defaultdict(set)
+    stats = {"images": len(images), "annotations": len(annotations), "written": 0, "crowd": 0,
+             "invalid": 0, "duplicates": 0, "clipped": 0}
+    for annotation in annotations:
+        image_id = annotation["image_id"]
+        if image_id not in image_info:
+            raise ValueError(f"Annotation refers to unknown image ID {image_id}")
+        category_id = annotation["category_id"]
+        if category_id not in class_ids:
+            raise ValueError(f"Annotation refers to unknown category ID {category_id}")
+        if annotation.get("iscrowd", False):
+            stats["crowd"] += 1
             continue
-            
-        bbox = ann['bbox'] # x,y,w,h
-        x, y, w, h = bbox
-        
-        # 2. Invalid Dimensions Check
-        if w <= 0 or h <= 0:
-            stats['invalid_dim'] += 1
+        bbox = annotation.get("bbox")
+        if not isinstance(bbox, list) or len(bbox) != 4 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in bbox):
+            stats["invalid"] += 1
             continue
-            
-        # 3. Tiny Object Check (< 1px area)
-        if (w * h) < 1.0:
-            stats['tiny'] += 1
+        x, y, box_width, box_height = bbox
+        if box_width <= 0 or box_height <= 0:
+            stats["invalid"] += 1
             continue
-            
-        # 4. Duplicate Check
-        # Round to 2 decimals for dup check to catch near-identical floats
-        dup_key = (img_id, ann['category_id'], round(x,2), round(y,2), round(w,2), round(h,2))
-        
-        # Global set might be too big, keep per-image logic is safer but we iterate flat list.
-        # Actually global set of tuples for 860k items is fine (memory wise ~100MB).
-        if dup_key in seen_anns_per_img:
-             stats['duplicates'] += 1
-             continue
-        seen_anns_per_img[dup_key] = True
+        _, width, height = image_info[image_id]
+        left = max(0.0, min(float(width), x))
+        top = max(0.0, min(float(height), y))
+        right = max(0.0, min(float(width), x + box_width))
+        bottom = max(0.0, min(float(height), y + box_height))
+        if right <= left or bottom <= top:
+            stats["invalid"] += 1
+            continue
+        if (left, top, right, bottom) != (x, y, x + box_width, y + box_height):
+            stats["clipped"] += 1
+        cx = (left + right) / (2 * width)
+        cy = (top + bottom) / (2 * height)
+        bw = (right - left) / width
+        bh = (bottom - top) / height
+        key = (class_ids[category_id], cx, cy, bw, bh)
+        if key in seen[image_id]:
+            stats["duplicates"] += 1
+            continue
+        seen[image_id].add(key)
+        labels[image_id].append(f"{key[0]} {cx:.12g} {cy:.12g} {bw:.12g} {bh:.12g}\n")
+        stats["written"] += 1
 
-        if img_id not in img_to_anns:
-            img_to_anns[img_id] = []
-        img_to_anns[img_id].append(ann)
-        stats['valid'] += 1
+    output = Path(output_dir).resolve()
+    if output.exists():
+        raise FileExistsError(f"Output already exists: {output}. Choose a new --output directory.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
+        staged = Path(temporary) / "labels"
+        staged.mkdir()
+        for image_id, (name, _, _) in image_info.items():
+            path = staged / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("".join(labels[image_id]), encoding="utf-8")
+        class_metadata = [{"yolo_id": class_ids[c["id"]], "coco_id": c["id"], "name": c["name"]}
+                          for c in sorted_categories]
+        (staged / "classes.json").write_text(json.dumps(class_metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        verify_output(staged, len(images), nc=len(categories))
+        staged.rename(output)
+    return stats
 
-    print("\n--- Filtering Stats ---")
-    print(json.dumps(stats, indent=2))
-    
-    # 4. Write Files (Ensure ALL images get a file)
-    processed_count = 0
-    
-    print("\nWriting files...")
-    for i, (img_id, img_info) in enumerate(images.items()):
-        if i % 10000 == 0:
-            sys.stdout.write(f"\rWriting TXT: {i}/{len(images)}")
-            sys.stdout.flush()
-        processed_count += 1
-        file_name = img_info['file_name'] 
-        label_name = os.path.splitext(file_name)[0] + ".txt"
-        label_path = save_dir / label_name
-        
-        img_w = img_info['width']
-        img_h = img_info['height']
-        
-        anns = img_to_anns.get(img_id, [])
-        lines = []
-        
-        for ann in anns:
-            cls_idx = coco_id_to_yolo[ann['category_id']]
-            x_min, y_min, w, h = ann['bbox']
-            
-            # Normalize with High Precision
-            x_c = (x_min + w / 2) / img_w
-            y_c = (y_min + h / 2) / img_h
-            w_norm = w / img_w
-            h_norm = h / img_h
-            
-            # Clip rigorously
-            x_c = max(0.0, min(1.0, x_c))
-            y_c = max(0.0, min(1.0, y_c))
-            w_norm = max(0.0, min(1.0, w_norm))
-            h_norm = max(0.0, min(1.0, h_norm))
-            
-            # Additional Sanity Check: if width or height becomes 0 after clip/norm, drop it
-            if w_norm == 0 or h_norm == 0:
-                continue
-                
-            lines.append(f"{cls_idx} {x_c:.6f} {y_c:.6f} {w_norm:.6f} {h_norm:.6f}")
-            
-        # Write (creates empty file if lines is empty)
-        with open(label_path, 'w') as f_out:
-            if lines:
-                f_out.write('\n'.join(lines) + '\n')
-            else:
-                pass # Empty file creation
 
-    print(f"Stats: Processed {processed_count} images. Output directory: {save_dir}")
-
-def verify_output(output_dir, expected_count, nc=80):
-    print(f"\nVerifying output in {output_dir}...")
-    files = list(Path(output_dir).glob("*.txt"))
+def verify_output(output_dir: str | Path, expected_count: int, nc: int = 80) -> None:
+    """Raise if generated YOLO labels are incomplete or malformed."""
+    files = list(Path(output_dir).rglob("*.txt"))
     if len(files) != expected_count:
-        print(f"CRITICAL: Expected {expected_count} files, found {len(files)}!")
-    else:
-        print(f"PASS: Count matches {expected_count}.")
-        
-    # Scan content for anomalies
-    error_count = 0
-    print("Scanning content...")
-    for i, p in enumerate(files):
-        if i % 10000 == 0:
-             sys.stdout.write(f"\rScanning: {i}/{len(files)}")
-             sys.stdout.flush()
-        with open(p, 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if not parts: continue
-                if len(parts) != 5:
-                    print(f"Error format: {p}")
-                    error_count += 1
-                    break
-                c, x, y, w, h = parts
-                c = int(c)
-                x, y, w, h = float(x), float(y), float(w), float(h)
-                
-                if c < 0 or c >= nc:
-                    print(f"Error class {c} in {p}")
-                    error_count += 1
-                if not (0 <= x <= 1 and 0 <= y <= 1 and 0 <= w <= 1 and 0 <= h <= 1):
-                    print(f"Error bounds in {p}: {line}")
-                    error_count += 1
-                    
-    if error_count == 0:
-        print("PASS: Content verification successful. No format or value errors.")
-    else:
-        print(f"FAIL: Found {error_count} errors.")
+        raise ValueError(f"Expected {expected_count} label files, found {len(files)}")
+    for path in files:
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            parts = line.split()
+            if len(parts) != 5:
+                raise ValueError(f"{path}:{line_number}: expected five columns")
+            try:
+                class_id = int(parts[0])
+                cx, cy, width, height = (float(value) for value in parts[1:])
+            except ValueError as exc:
+                raise ValueError(f"{path}:{line_number}: invalid numeric label") from exc
+            if not 0 <= class_id < nc or not all(math.isfinite(v) for v in (cx, cy, width, height)):
+                raise ValueError(f"{path}:{line_number}: invalid class or coordinate")
+            if width <= 0 or height <= 0 or cx - width / 2 < -1e-7 or cy - height / 2 < -1e-7 or cx + width / 2 > 1 + 1e-7 or cy + height / 2 > 1 + 1e-7:
+                raise ValueError(f"{path}:{line_number}: box lies outside the image")
