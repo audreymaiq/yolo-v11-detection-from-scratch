@@ -5,7 +5,6 @@ import tqdm as TQDM
 import numpy as np
 import logging
 import torch
-import torchvision
 import time
 import json
 import os
