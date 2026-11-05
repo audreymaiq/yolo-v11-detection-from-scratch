@@ -1,6 +1,7 @@
 import os
 import gc
 import glob
+import cv2
 import torch
 import hashlib
 import logging
@@ -10,6 +11,7 @@ from typing import Any
 from pathlib import Path
 from copy import deepcopy
 from itertools import repeat
+from uuid import uuid4
 from PIL import Image, ImageOps
 from torch.utils.data import Dataset
 
@@ -330,9 +332,10 @@ def verify_image_label(args: tuple) -> list:
         if im.format.lower() in {"jpg", "jpeg"}:
             with open(im_file, "rb") as f:
                 f.seek(-2, 2)
-                if f.read() != b"\xff\xd9":
-                    ImageOps.exif_transpose(Image.open(im_file)).save(im_file, "JPEG", subsampling=0, quality=100)
-                    msg = f"{prefix}{im_file}: corrupt JPEG restored and saved"
+                corrupt = f.read() != b"\xff\xd9"
+            if corrupt:  # write a new file and swap it in: the image may be a hard link shared with other versions
+                _replace_image(im_file, lambda tmp: _exif_jpeg(im_file).save(tmp, "JPEG", subsampling=0, quality=100))
+                msg = f"{prefix}{im_file}: corrupt JPEG restored and saved"
 
         if os.path.isfile(lb_file):
             nf = 1
@@ -370,16 +373,32 @@ def verify_image_label(args: tuple) -> list:
         nc = 1
         msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"
         return [None, None, None, nm, nf, ne, nc, msg]
-    
+
+
+def _exif_jpeg(im_file: str | Path) -> Image.Image:
+    """Load an image with its EXIF orientation applied, closing the source file."""
+    with Image.open(im_file) as im:
+        return ImageOps.exif_transpose(im)
+
+
+def _replace_image(im_file: str | Path, write) -> None:
+    """Atomically replace an image with what `write(tmp)` saves, so hard links to the original are never modified."""
+    im_file = Path(im_file)
+    tmp = im_file.with_name(f".{im_file.stem}.{uuid4().hex}{im_file.suffix}")
+    try:
+        write(str(tmp))
+        os.replace(tmp, im_file)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def exif_size(img: Image.Image) -> tuple[int, int]:
     """Return exif-corrected PIL size."""
     s = img.size  # (width, height)
-    if img.format == "JPEG":  # only support JPEG images
-        try:
-            if exif := img.getexif():
-                rotation = exif.get(274, None)  # the EXIF key for the orientation tag is 274
-                if rotation in {6, 8}:  # rotation 270 or 90
-                    s = s[1], s[0]
-        except Exception:
-            pass
+    try:
+        exif = img.tag_v2 if img.format == "TIFF" else img.getexif()  # TIFF tags stay readable after verify()
+        if exif.get(274) in {5, 6, 7, 8}:  # swap w and h; WebP/TIFF vary by cv2/Pillow version, so decode those
+            s = s[::-1] if img.format in {"JPEG", "MPO", "PNG", "AVIF"} else cv2.imread(img.filename).shape[1::-1]
+    except Exception:
+        pass
     return s
