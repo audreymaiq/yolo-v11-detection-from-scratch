@@ -5,6 +5,7 @@ import yaml
 import torch
 import random
 import logging
+import time
 import numpy as np
 import torch.nn as nn
 from typing import Any
@@ -804,7 +805,7 @@ def attempt_compile(
 
     if mode is True:
         mode = "default"
-    prefix = colorstr("compile:")
+    prefix = "compile:"
     LOGGER.info(f"{prefix} starting torch.compile with '{mode}' mode...")
     if mode == "max-autotune":
         LOGGER.warning(f"{prefix} mode='{mode}' not recommended, using mode='max-autotune-no-cudagraphs' instead")
