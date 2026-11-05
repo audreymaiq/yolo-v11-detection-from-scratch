@@ -4,7 +4,7 @@ import random
 import numpy as np
 from typing import Any
 from collections.abc import Iterator
-from torch.utils.data import DataLoader, dataloader
+from torch.utils.data import dataloader
 
 class _RepeatSampler:
     """Sampler that repeats forever for infinite iteration.
