@@ -1,6 +1,6 @@
 import argparse
 
-from yolo11.data.convert_coco import convert_coco_json, verify_output
+from yolo11.data.convert_coco import convert_coco_json
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -10,6 +10,6 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    convert_coco_json(args.json, args.output)
-    if args.verify_count > 0:
-        verify_output(args.output, args.verify_count)
+    stats = convert_coco_json(args.json, args.output, expected_count=args.verify_count or None)
+    print(f"Converted {stats['images']} images and {stats['written']} boxes to {args.output}")
+    print(f"Skipped: {stats['crowd']} crowd, {stats['invalid']} invalid, {stats['duplicates']} duplicates; clipped {stats['clipped']} boxes")
