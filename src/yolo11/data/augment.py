@@ -456,7 +456,8 @@ class MixUp(BaseMixTransform):
             (dict): Mixed labels.
         """
         # Lấy ảnh 2
-        if len(labels.get('mix_labels', [])) == 0: return labels
+        if len(labels.get('mix_labels', [])) == 0:
+            return labels
         labels2 = labels["mix_labels"][0]
         # Chuẩn hóa đầu vào
         # Ép tất cả về dạng 3D (H, W, C) để xử lý toán học an toàn
@@ -468,8 +469,10 @@ class MixUp(BaseMixTransform):
         if img1.shape[2] != img2.shape[2]:
              # Đơn giản hóa: Ép về cùng số kênh lớn nhất (thường là 3)
              max_c = max(img1.shape[2], img2.shape[2])
-             if img1.shape[2] < max_c: img1 = np.repeat(img1, max_c, axis=2)
-             if img2.shape[2] < max_c: img2 = np.repeat(img2, max_c, axis=2)
+             if img1.shape[2] < max_c:
+                 img1 = np.repeat(img1, max_c, axis=2)
+             if img2.shape[2] < max_c:
+                 img2 = np.repeat(img2, max_c, axis=2)
         # Tính toán MixUp
         mixed_img = (img1 * r + img2 * (1 - r)).astype(np.uint8)
         labels["img"] = mixed_img
