@@ -679,7 +679,8 @@ class DetectionTrainer:
         start_epoch = ckpt.get("epoch", -1) + 1
         assert start_epoch > 0, (
             f"{self.args.model} training to {self.epochs} epochs is finished, nothing to resume.\n"
-            f"Start a new training without resuming, i.e. 'yolo train model={self.args.model}'"
+            f"To train further, start a new run from it: set `model: {self.args.model}` in the config "
+            f"and run 'yolo11 train --config <config>' without --resume."
         )
         LOGGER.info(f"Resuming training {self.args.model} from epoch {start_epoch + 1} to {self.epochs} total epochs")
         if self.epochs < start_epoch:
