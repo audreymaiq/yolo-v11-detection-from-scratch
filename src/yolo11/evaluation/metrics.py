@@ -281,21 +281,18 @@ def compute_ap(recall: np.ndarray, precision: np.ndarray) -> tuple:
         (np.ndarray): Precision envelope curve.
         (np.ndarray): Recall curve with sentinel values appended.
     """
-    # Append sentinel values to beginning and end
-    mrec = np.concatenate(([0.0], recall, [1.0]))
-    mpre = np.concatenate(([1.0], precision, [0.0]))
+    # Match Ultralytics compute_ap: close the curve at the last observed recall.
+    # Jumping directly from a partial recall to 1.0 overestimates AP.
+    mrec = np.concatenate(([0.0], recall, [recall[-1] if len(recall) else 1.0], [1.0]))
+    mpre = np.concatenate(([1.0], precision, [0.0], [0.0]))
 
     # Compute the precision envelope
     mpre = np.flip(np.maximum.accumulate(np.flip(mpre)))
 
-    # Integrate area under curve
-    method = 1  # methods: 1 - continuous, 2 - discrete (MS COCO)
-    if method == 1:
-        x = np.linspace(0, 1, 101)  # 101-point interp (COCO)
-        ap = _trapezoid(np.interp(x, mrec, mpre), x)  # integrate
-    else:  # 2
-        i = np.where(mrec[1:] != mrec[:-1])[0]  # points where x-axis (recall) changes
-        ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])  # area under curve
+    # Ultralytics-style 101-point interpolation. Official COCOeval also handles
+    # crowd, area ranges and max detections, so this is not a COCOeval result.
+    x = np.linspace(0, 1, 101)
+    ap = _trapezoid(np.interp(x, mrec, mpre), x)
 
     return ap, mpre, mrec
 
