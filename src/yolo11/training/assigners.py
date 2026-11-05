@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import warnings
 from yolo11.utils.bbox_utils import bbox_iou
 
