@@ -44,6 +44,7 @@ def export_model(
     detect = model.model[-1]
     if not isinstance(detect, Detect):
         raise TypeError(f"Expected a Detect head, got {type(detect).__name__}")
+    detect.dynamic = dynamic  # rebuild anchors from the input shape instead of tracing them as constants
     detect.export = True
     detect.format = fmt
 
