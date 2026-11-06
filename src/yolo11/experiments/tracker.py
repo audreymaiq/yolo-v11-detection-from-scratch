@@ -36,6 +36,13 @@ class ExperimentTracker:
         wandb.init(project=os.getenv("PROJECT_NAME", "yolo11"), config=self.config, name=self.config.get("name"))
         self._wandb = wandb
 
+    def log_params(self, params: dict[str, Any]) -> None:
+        """Record run-level values such as provenance (MLflow tags, W&B config)."""
+        if self._mlflow:
+            self._mlflow.set_tags({k: str(v) for k, v in params.items()})
+        if self._wandb:
+            self._wandb.config.update(params, allow_val_change=True)
+
     def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
         if self._mlflow:
             for key, value in metrics.items():
