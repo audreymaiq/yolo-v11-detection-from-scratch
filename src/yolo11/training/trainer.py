@@ -9,6 +9,7 @@ import warnings
 import logging
 import random
 import torch
+import json
 import math
 import time
 import yaml
@@ -21,8 +22,10 @@ from yolo11.registry.optimizer_registry import OptimizerRegistry
 from yolo11.evaluation.validator import DetectionValidator
 from yolo11.models.model import DetectionModel
 from yolo11.utils.visualize_utils import plot_images, plot_labels, plot_results
-from yolo11.utils.torch_utils import ModelEMA, EarlyStopping, init_seeds, unwrap_model, autocast, check_amp, check_imgsz, load_checkpoint, convert_optimizer_state_dict_to_fp16, attempt_compile, one_cycle, strip_optimizer, torch_distributed_zero_first, print_args, get_cfg, get_save_dir, select_device
+from yolo11.utils.torch_utils import ModelEMA, EarlyStopping, init_seeds, unwrap_model, autocast, check_amp, check_imgsz, load_checkpoint, attempt_compile, one_cycle, strip_optimizer, torch_distributed_zero_first, print_args, get_cfg, get_save_dir, select_device, get_rng_state, set_rng_state
+from yolo11.utils.provenance import collect_provenance, summary
 from yolo11.training.losses import v8DetectionLoss
+from yolo11 import __version__
 
 LOGGER = logging.getLogger(__name__) 
 
@@ -35,6 +38,7 @@ class DetectionTrainer:
         if overrides:
             config_dict = {**config_dict, **overrides}
         self.args = SimpleNamespace(**config_dict)
+        self.tracker = tracker  # experiments.tracker.ExperimentTracker or None
 
         self.check_resume(config_dict)
         
@@ -168,7 +172,6 @@ class DetectionTrainer:
 
         nb = len(self.train_loader)
         nw = max(round(self.args.warmup_epochs * nb), 100) if self.args.warmup_epochs > 0 else -1
-        last_opt_step = -1
         self.epoch_time = None
         self.epoch_time_start = time.time()
         self.train_time_start = time.time()
@@ -185,7 +188,12 @@ class DetectionTrainer:
             self.plot_idx.extend([base_idx, base_idx + 1, base_idx + 2])
         
         epoch = self.start_epoch
-        self.optimizer.zero_grad()  # zero any resumed gradients to ensure stability on train start
+        self.optimizer.zero_grad()
+        if self.resume_grads:  # gradients accumulated since the last optimizer step of the resumed run
+            for name, p in unwrap_model(self.model).named_parameters():
+                if name in self.resume_grads:
+                    p.grad = self.resume_grads[name].to(p.device)
+            self.resume_grads = None
         
         while True:
             self.epoch = epoch
@@ -200,7 +208,7 @@ class DetectionTrainer:
             if epoch == (self.epochs - getattr(self.args, "close_mosaic", 10)):
                 self._close_dataloader_mosaic()
                 if hasattr(self.train_loader, "reset"):
-                    self.train_loader.reset()
+                    self.train_loader.reset(epoch)  # same order and worker seeds as a run resumed here
             
             LOGGER.info(self.progress_string())
             pbar = tqdm.tqdm(enumerate(self.train_loader), total=nb, desc=f"Epoch {epoch + 1}/{self.epochs}")
@@ -238,9 +246,9 @@ class DetectionTrainer:
                 self.scaler.scale(self.loss).backward()
                 
                 # Optimize
-                if ni - last_opt_step >= self.accumulate:
+                if ni - self.last_opt_step >= self.accumulate:
                     self.optimizer_step()
-                    last_opt_step = ni
+                    self.last_opt_step = ni
                 
                 # Log
                 loss_len = self.tloss.shape[0] if len(self.tloss.shape) else 1
@@ -277,7 +285,10 @@ class DetectionTrainer:
             self.nan_recovery_attempts = 0  # Reset counter after successful epoch
             
             # Save metrics
-            self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr})
+            epoch_metrics = {**self.label_loss_items(self.tloss), **self.metrics, **self.lr}
+            self.save_metrics(metrics=epoch_metrics)
+            if self.tracker:
+                self.tracker.log_metrics({k: float(v) for k, v in epoch_metrics.items()}, step=epoch + 1)
             self.stop |= self.stopper(epoch + 1, self.fitness) or final_epoch
             
             # Save model
@@ -300,6 +311,10 @@ class DetectionTrainer:
         self.final_eval()
         if self.args.plots:
             self.plot_metrics()
+        if self.tracker:
+            if self.metrics:
+                self.tracker.log_metrics({f"final/{k}": float(v) for k, v in self.metrics.items()}, step=epoch + 1)
+            self.tracker.log_artifacts(str(self.save_dir))
         self._clear_memory()
 
     def _setup_train(self):
@@ -350,6 +365,8 @@ class DetectionTrainer:
         self.test_loader = self.get_dataloader(self.data.get("val") or self.data.get("test"), batch_size * 2, mode="val")
         self.validator = self.get_validator()
         self.ema = ModelEMA(self.model)
+        self.last_opt_step = -1  # batch index (ni) of the last optimizer step
+        self.resume_grads = None
 
         if "loss" in self.model.__dict__:
             LOGGER.info("Fix: Removed invalid 'loss' attribute from model.")
@@ -370,6 +387,7 @@ class DetectionTrainer:
         self.optimizer = self.build_optimizer(model=self.model, name=getattr(self.args, "optimizer", "auto"), lr=getattr(self.args, "lr0", 0.01), momentum=getattr(self.args, "momentum", 0.937), decay=weight_decay, iterations=iterations)
         self._setup_scheduler()
         self.stopper, self.stop = EarlyStopping(patience=getattr(self.args, "patience", 100)), False
+        self.setup_provenance(ckpt)
         self.resume_training(ckpt)
         self.scheduler.last_epoch = self.start_epoch - 1
 
@@ -432,6 +450,7 @@ class DetectionTrainer:
             shuffle=shuffle,
             drop_last=getattr(self.args, "compile", False) and mode == "train",
             pin_memory=True,
+            seed=getattr(self.args, "seed", 0),
         )
 
     def preprocess_batch(self, batch: dict) -> dict:
@@ -500,7 +519,10 @@ class DetectionTrainer:
             torch.cuda.empty_cache()
     
     def _load_checkpoint_state(self, ckpt):
-        """Load optimizer, scaler, EMA, and best_fitness from checkpoint."""
+        """Load model, optimizer, scaler, EMA, best_fitness and early-stopping state from checkpoint."""
+        state = ckpt.get("train_state") or {}
+        if state.get("model") is not None:  # the trained weights; checkpoints without them resume from EMA
+            unwrap_model(self.model).load_state_dict(state["model"])
         if ckpt.get("optimizer") is not None:
             self.optimizer.load_state_dict(ckpt["optimizer"])
         if ckpt.get("scaler") is not None:
@@ -510,6 +532,11 @@ class DetectionTrainer:
             self.ema.ema.load_state_dict(ckpt["ema"].float().state_dict())
             self.ema.updates = ckpt["updates"]
         self.best_fitness = ckpt.get("best_fitness", 0.0)
+        if state.get("stopper"):
+            self.stopper.best_fitness = state["stopper"]["best_fitness"]
+            self.stopper.best_epoch = state["stopper"]["best_epoch"]
+        self.last_opt_step = state.get("last_opt_step", -1)
+        self.resume_grads = state.get("grads")
 
     def _handle_nan_recovery(self, epoch):
         """Detect and recover from NaN/Inf loss and fitness collapse by loading last checkpoint."""
@@ -532,8 +559,10 @@ class DetectionTrainer:
         ema_state = ckpt["ema"].float().state_dict()
         if not all(torch.isfinite(v).all() for v in ema_state.values() if isinstance(v, torch.Tensor)):
             raise RuntimeError(f"Checkpoint {self.last} is corrupted with NaN/Inf weights")
-        unwrap_model(self.model).load_state_dict(ema_state)  # Load EMA weights into model
         self._load_checkpoint_state(ckpt)  # Load optimizer/scaler/EMA/best_fitness
+        unwrap_model(self.model).load_state_dict(ema_state)  # restart from the EMA weights, not the diverged ones
+        self.optimizer.zero_grad()  # drop the non-finite gradients of the failed epoch
+        self.resume_grads = None
         del ckpt, ema_state
         self.scheduler.last_epoch = epoch - 1
         return True
@@ -672,6 +701,39 @@ class DetectionTrainer:
     def plot_metrics(self):
         plot_results(file=self.csv)  # save results.png
 
+    def setup_provenance(self, ckpt):
+        """Record the code, environment and data of this run in provenance.json, checkpoints and the tracker.
+
+        A resumed run keeps the provenance of the run it continues and appends this session under ``resumes``,
+        warning when the data differs from what the run started on.
+        """
+        current = collect_provenance(
+            self.device,
+            {"train": self.train_loader.dataset, "val": self.test_loader.dataset},
+            data_yaml=str(self.args.data),
+        )
+        if ckpt is not None and not self.resume:  # fine-tuning: record which checkpoint (and run) we started from
+            current["init_weights"] = {"path": str(self.args.model), **summary(ckpt.get("provenance"))}
+        original = (ckpt or {}).get("provenance") if self.resume else None
+        if original:
+            for split in ("train", "val"):
+                before = (original.get("data") or {}).get(split) or {}
+                now = current["data"][split]
+                if before.get("sha256") and before["sha256"] != now["sha256"]:
+                    LOGGER.warning(
+                        f"The {split} data differs from the data this run started on ({now['images']} images now, "
+                        f"{before['images']} before). Resuming on it anyway."
+                    )
+            self.provenance = {**original, "resumes": [*original.get("resumes", []), current]}
+        else:
+            self.provenance = current
+        (self.save_dir / "provenance.json").write_text(json.dumps(self.provenance, indent=2), encoding="utf-8")
+        if (current["git"] or {}).get("dirty"):
+            LOGGER.warning("Training from a checkout with uncommitted changes: its commit alone does not reproduce it.")
+        LOGGER.info(f"Provenance: {summary(current)}")
+        if self.tracker:
+            self.tracker.log_params(summary(current))
+
     def resume_training(self, ckpt):
         """Resume YOLO training from given epoch and best fitness."""
         if ckpt is None or not self.resume:
@@ -691,29 +753,46 @@ class DetectionTrainer:
         self._load_checkpoint_state(ckpt)
         self.start_epoch = start_epoch
         close_mosaic = getattr(self.args, 'close_mosaic', 10)  # Safe access with default
-        if start_epoch > (self.epochs - close_mosaic):
+        if close_mosaic and start_epoch > (self.epochs - close_mosaic):  # at == the training loop closes it
             self._close_dataloader_mosaic()
+        self.train_loader.reset(start_epoch)  # continue the shuffle order (and worker seeds) at this epoch
+        state = ckpt.get("train_state") or {}
+        if state.get("rng"):
+            set_rng_state(state["rng"])  # last: nothing after this may draw random numbers before the first batch
 
     def save_model(self):
         """Save model training checkpoints with additional metadata."""
         import io
         
-        # Serialize ckpt to a byte buffer once (more efficient)
+        # Serialize ckpt to a byte buffer once (more efficient). Training state stays in FP32 so that resuming
+        # continues exactly where this epoch ended; final_eval strips it and halves the weights.
         buffer = io.BytesIO()
         torch.save(
             {
                 "epoch": self.epoch,
                 "best_fitness": self.best_fitness,
-                "model": None,  # resume and final checkpoints derive from EMA
-                "ema": deepcopy(unwrap_model(self.ema.ema)).half(),
+                "model": None,  # final checkpoints and inference use EMA
+                "ema": deepcopy(unwrap_model(self.ema.ema)),
                 "updates": self.ema.updates,
-                "optimizer": convert_optimizer_state_dict_to_fp16(deepcopy(self.optimizer.state_dict())),
+                "optimizer": deepcopy(self.optimizer.state_dict()),
                 "scaler": self.scaler.state_dict(),
+                "train_state": {
+                    "model": deepcopy(unwrap_model(self.model).state_dict()),
+                    "rng": get_rng_state(),
+                    "last_opt_step": self.last_opt_step,
+                    "grads": {  # pending accumulation when the epoch did not end on an optimizer step
+                        n: p.grad.detach().clone()
+                        for n, p in unwrap_model(self.model).named_parameters()
+                        if p.grad is not None
+                    },
+                    "stopper": {"best_fitness": self.stopper.best_fitness, "best_epoch": self.stopper.best_epoch},
+                },
                 "train_args": vars(self.args),
                 "train_metrics": {**self.metrics, **{"fitness": self.fitness}},
                 "train_results": self.read_results_csv(),
+                "provenance": self.provenance,
                 "date": datetime.now().isoformat(),
-                "version": "YOLO11-Detection",
+                "version": __version__,
             },
             buffer,
         )
