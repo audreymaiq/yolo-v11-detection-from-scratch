@@ -1,5 +1,6 @@
 """Export a trained YOLO11 checkpoint to deployment formats (ONNX, TorchScript)."""
 
+import hashlib
 import inspect
 import json
 import logging
@@ -11,6 +12,7 @@ import torch
 from yolo11 import __version__
 from yolo11.inference.backends import TORCHSCRIPT_METADATA
 from yolo11.models.head import Detect
+from yolo11.utils.provenance import summary
 from yolo11.utils.torch_utils import check_imgsz, load_checkpoint, select_device
 
 LOGGER = logging.getLogger(__name__)
@@ -36,13 +38,14 @@ def export_model(
     ``(B, 4 + nc, N)`` with ``xywh`` boxes in input pixels followed by per-class sigmoid scores. NMS is *not* part of
     the graph. Class names, stride, input size and export options are embedded in the file (ONNX
     ``metadata_props``, TorchScript extra file ``config.txt``); ``yolo11.inference.Predictor`` reads them.
+    ``source`` records the checkpoint (name, SHA-256) and the commit and data it was trained from.
     """
     if fmt not in FORMATS:
         raise ValueError(f"Unsupported export format '{fmt}'. Choose from {FORMATS}.")
     device = select_device(device)
     half = half and device.type != "cpu"
 
-    model = load_checkpoint(weights, device=device, fuse=True)[0]
+    model, ckpt = load_checkpoint(weights, device=device, fuse=True)
     model = (model.half() if half else model.float()).eval()
     for p in model.parameters():
         p.requires_grad = False
@@ -85,6 +88,7 @@ def export_model(
         "names": dict(enumerate(names)) if isinstance(names, (list, tuple)) else dict(names),
         "dynamic": dynamic,
         "half": half,
+        "source": {"weights": weights.name, "sha256": _sha256(weights), **summary(ckpt.get("provenance"))},
     }
     if fmt == "onnx":
         _export_onnx(model, im, output, opset, dynamic, simplify, metadata)
@@ -93,6 +97,14 @@ def export_model(
         ts.save(str(output), _extra_files={TORCHSCRIPT_METADATA: json.dumps(metadata, ensure_ascii=False)})
     LOGGER.info(f"Exported {weights} -> {output} ({output.stat().st_size / 1e6:.1f} MB)")
     return output
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _export_onnx(model, im, output: Path, opset: int, dynamic: bool, simplify: bool, metadata: dict) -> None:
