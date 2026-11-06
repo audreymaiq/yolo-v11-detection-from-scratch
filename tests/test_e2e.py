@@ -168,6 +168,41 @@ def test_exports_embed_metadata(exports):
     assert json.loads(extra["config.txt"])["imgsz"] == [64, 64]
 
 
+def test_exports_record_their_source(run_dir, exports):
+    import hashlib
+
+    import onnx
+
+    weights = run_dir / "weights" / "last.pt"
+    provenance = json.loads((run_dir / "provenance.json").read_text())
+    props = {p.key: json.loads(p.value) for p in onnx.load(str(exports["onnx"])).metadata_props}
+    source = props["source"]
+    assert source["weights"] == "last.pt"
+    assert source["sha256"] == hashlib.sha256(weights.read_bytes()).hexdigest()
+    assert source["data_train_sha256"] == provenance["data"]["train"]["sha256"]
+    assert source.get("git_commit") == (provenance["git"] or {}).get("commit")
+
+
+def test_run_records_provenance(run_dir):
+    import torch
+
+    provenance = json.loads((run_dir / "provenance.json").read_text())
+    assert provenance["environment"]["packages"]["torch"] and provenance["environment"]["device"] == "cpu"
+    assert provenance["data"]["train"]["images"] == 8 and provenance["data"]["val"]["images"] == 4
+    ckpt = torch.load(run_dir / "weights" / "best.pt", map_location="cpu", weights_only=False)
+    assert ckpt["provenance"] == provenance
+
+
+def test_finetune_records_initial_weights(run_dir, tmp_path):
+    cfg = yaml.safe_load((run_dir.parent / "cfg.yaml").read_text())
+    cfg.update(model=str(run_dir / "weights" / "best.pt"), save_dir=str(tmp_path), name="ft")
+    (tmp_path / "ft.yaml").write_text(yaml.safe_dump(cfg))
+    assert main(["train", "--config", str(tmp_path / "ft.yaml")]) == 0
+    init = json.loads((tmp_path / "ft" / "provenance.json").read_text())["init_weights"]
+    parent = json.loads((run_dir / "provenance.json").read_text())
+    assert init["path"] == cfg["model"] and init["data_train_sha256"] == parent["data"]["train"]["sha256"]
+
+
 @pytest.mark.parametrize("fmt", ["onnx", "onnx_dynamic", "onnx_batch2", "torchscript"])
 def test_exported_models_match_checkpoint(run_dir, tiny_dataset, exports, fmt):
     import numpy as np
