@@ -24,7 +24,11 @@ dependencies = [
 [project.optional-dependencies]
 export = ["onnx>=1.14", "onnxsim", "onnxruntime>=1.15"]
 tracking = ["mlflow>=2.5", "wandb>=0.15"]
-dev = ["pytest>=7.4", "ruff"]
+
+[dependency-groups]
+# `uv sync` installs this group by default; with pip >= 25.1: `pip install --group dev`.
+# ruff is held to one minor version: a new minor can change what `ruff check` reports on unchanged code.
+dev = ["pytest>=7.4", "ruff>=0.17,<0.18"]
 
 [project.scripts]
 yolo11 = "yolo11.cli.main:main"
@@ -40,3 +44,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
+
+[tool.ruff.lint]
+# Pin the rule set: ruff 0.17 widened its defaults, which would change what passes without any code change.
+select = ["E4", "E7", "E9", "F"]
