@@ -15,11 +15,11 @@ from datetime import datetime
 import torch.distributed as dist
 from contextlib import contextmanager
 
+from yolo11 import __version__
 from yolo11.cfg import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS
 from yolo11.utils.legacy import install_legacy_aliases
 
 LOGGER = logging.getLogger(__name__)
-__version__ = "0.1.0"
 
 
 class ModelEMA:
@@ -415,6 +415,26 @@ def init_seeds(seed=0, deterministic=False):
         os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
         os.environ.pop("PYTHONHASHSEED", None)
 
+def get_rng_state() -> dict[str, Any]:
+    """Snapshot the Python, NumPy and torch (CPU and CUDA) random number generators."""
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+        "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+
+
+def set_rng_state(state: dict[str, Any]) -> None:
+    """Restore a ``get_rng_state`` snapshot; CUDA state is restored only when the device count matches."""
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    cuda = state.get("cuda")
+    if cuda and torch.cuda.is_available() and len(cuda) == torch.cuda.device_count():
+        torch.cuda.set_rng_state_all(cuda)
+
+
 def load_checkpoint(weight, device=None, inplace=True, fuse=False):
     """
     Load a single model weights
@@ -624,22 +644,6 @@ def one_cycle(y1=0.0, y2=1.0, steps=100):
     """
     return lambda x: max((1 - math.cos(x * math.pi / steps)) / 2, 0) * (y2 - y1) + y1
 
-def convert_optimizer_state_dict_to_fp16(state_dict):
-    """Convert the state_dict of a given optimizer to FP16, focusing on the 'state' key for tensor conversions.
-
-    Args:
-        state_dict (dict): Optimizer state dictionary.
-
-    Returns:
-        (dict): Converted optimizer state dictionary with FP16 tensors.
-    """
-    for state in state_dict["state"].values():
-        for k, v in state.items():
-            if k != "step" and isinstance(v, torch.Tensor) and v.dtype is torch.float32:
-                state[k] = v.half()
-
-    return state_dict
-
 def yaml_model_load(path):
     """Load a YOLO model from a YAML file.
 
@@ -728,14 +732,13 @@ def strip_optimizer(f: str | Path = "best.pt", s: str = "", updates: dict[str, A
         assert isinstance(x, dict), "checkpoint is not a Python dictionary"
         assert "model" in x, "'model' missing from checkpoint"
     except Exception as e:
-        LOGGER.warning(f"Skipping {f}, not a valid Ultralytics model: {e}")
+        LOGGER.warning(f"Skipping {f}, not a valid yolo11 checkpoint: {e}")
         return {}
 
     metadata = {
         "date": datetime.now().isoformat(),
         "version": __version__,
-        "license": "AGPL-3.0 License (https://ultralytics.com/license)",
-        "docs": "https://docs.ultralytics.com",
+        "license": "AGPL-3.0",
     }
 
     # Update model
@@ -751,7 +754,7 @@ def strip_optimizer(f: str | Path = "best.pt", s: str = "", updates: dict[str, A
 
     # Update other keys
     args = {**DEFAULT_CFG_DICT, **x.get("train_args", {})}  # combine args
-    for k in "optimizer", "best_fitness", "ema", "updates", "scaler":  # keys
+    for k in "optimizer", "best_fitness", "ema", "updates", "scaler", "train_state":  # resume-only state
         x[k] = None
     x["epoch"] = -1
     x["train_args"] = {k: v for k, v in args.items() if k in DEFAULT_CFG_KEYS}  # strip non-default keys
