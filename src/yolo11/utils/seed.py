@@ -1,13 +1,6 @@
-import random
-import numpy as np
-import torch
+from yolo11.utils.torch_utils import init_seeds
 
-def set_seed(seed: int = 42):
-    """Set random seed for reproducibility"""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+
+def set_seed(seed: int = 42, deterministic: bool = True):
+    """Seed Python, NumPy and torch (see ``torch_utils.init_seeds``, which the trainer uses with ``config['seed']``)."""
+    init_seeds(seed, deterministic=deterministic)
