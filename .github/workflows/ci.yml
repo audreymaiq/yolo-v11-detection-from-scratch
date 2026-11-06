@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.13.7" # keep in sync with the uv image in Dockerfile
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
+      - name: Ruff (version from uv.lock)
+        run: |
+          uv sync --frozen --only-group dev
+          uv run --frozen --no-sync ruff check .
+
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.10" } # oldest supported Python
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.11" } # the development setup
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Install the locked environment
+        run: uv sync --frozen --extra export
+      - name: Pytest
+        run: uv run --frozen --no-sync pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free disk space for the CUDA-enabled torch image
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: yolo11:ci
+          build-args: GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test the image
+        run: |
+          docker run --rm yolo11:ci --version
+          docker run --rm --entrypoint python yolo11:ci -c "
+          import cv2, onnxruntime, torch
+          from yolo11.utils.provenance import git_info
+          assert git_info()['commit'] == '${{ github.sha }}', git_info()
+          print('torch', torch.__version__, 'cuda', torch.version.cuda)
+          "
