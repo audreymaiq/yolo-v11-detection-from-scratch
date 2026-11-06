@@ -3,7 +3,6 @@ import logging
 
 from yolo11.utils.config import load_config
 from yolo11.utils.logger import get_logger
-from yolo11.utils.seed import set_seed
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -26,12 +25,10 @@ def run(args: argparse.Namespace) -> None:
     config = load_config(args.config, overrides)
 
     logger = get_logger("yolo11", log_file="logs/train.log", log_level="DEBUG" if args.debug else "INFO")
-    logger.info(f"Config: {args.config}")
-    set_seed(config.get("seed", 42))
+    logger.info(f"Config: {args.config}")  # the trainer seeds from config["seed"]
 
-    experiments = config.get("experiments", {})
-    use_mlflow = experiments.get("use_mlflow", False) and not args.debug
-    use_wandb = experiments.get("use_wandb", False) and not args.debug
+    use_mlflow = bool(config.get("mlflow")) and not args.debug
+    use_wandb = bool(config.get("wandb")) and not args.debug
     tracker = ExperimentTracker(config, use_mlflow=use_mlflow, use_wandb=use_wandb)
     try:
         DetectionTrainer(config, logger=logger, tracker=tracker).train()
