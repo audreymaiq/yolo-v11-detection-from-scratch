@@ -62,9 +62,42 @@ class InfiniteDataLoader(dataloader.DataLoader):
         except Exception:
             pass
 
-    def reset(self):
-        """Reset iterator for dataset modifications during training."""
+    def reset(self, epoch: int | None = None):
+        """Reset iterator for dataset modifications during training.
+
+        With ``epoch``, the next pass shuffles as epoch ``epoch`` does (see ``EpochShuffleSampler``) and workers are
+        reseeded from it, so a run resumed at that epoch gets the same order as one that never stopped.
+        """
+        if epoch is not None:
+            if isinstance(self.sampler, EpochShuffleSampler):
+                self.sampler.set_epoch(epoch)
+            if self.generator is not None and hasattr(self, "seed"):
+                self.generator.manual_seed(self.seed + epoch)
         self.iterator = self._get_iterator()
+
+
+class EpochShuffleSampler(torch.utils.data.Sampler[int]):
+    """Shuffle with a permutation that depends only on ``(seed, epoch)``.
+
+    Each pass advances the epoch, so the order of epoch ``e`` does not depend on how many passes this sampler (or a
+    previous process) has made: a resumed run calls ``set_epoch`` and sees the same order an uninterrupted run would.
+    """
+
+    def __init__(self, n: int, seed: int = 0):
+        self.n = n
+        self.seed = seed
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __iter__(self) -> Iterator[int]:
+        order = np.random.default_rng([self.seed, self.epoch]).permutation(self.n)
+        self.epoch += 1
+        return iter(order.tolist())
 
 
 def seed_worker(worker_id: int) -> None:
@@ -81,9 +114,10 @@ def build_dataloader(
     shuffle: bool = True,
     drop_last: bool = False,
     pin_memory: bool = True,
+    seed: int = 0,
 ) -> InfiniteDataLoader:
     """Build InfiniteDataLoader for training or validation.
-    
+
     Args:
         dataset: Dataset to load from.
         batch: Batch size.
@@ -91,23 +125,24 @@ def build_dataloader(
         shuffle: Whether to shuffle data.
         drop_last: Whether to drop incomplete final batch.
         pin_memory: Whether to use pinned (page-locked) memory.
-    
+        seed: Seeds the shuffle order (per epoch, see ``EpochShuffleSampler``) and the worker RNGs.
+
     Returns:
         InfiniteDataLoader configured for efficient training.
     """
     # Ensure batch doesn't exceed dataset size
     batch = min(batch, len(dataset))
-    
+
     # Worker calculation: CPU cores per GPU, capped by user request
     nd = torch.cuda.device_count()  # Number of CUDA devices
     nw = min(os.cpu_count() // max(nd, 1), workers)
-    
-    sampler = None
-    
-    # Generator for reproducible shuffling
+
+    sampler = EpochShuffleSampler(len(dataset), seed=seed) if shuffle else None
+
+    # Seeds the base seed each iterator hands its workers (seed_worker)
     generator = torch.Generator()
-    generator.manual_seed(6148914691236517205)  # Ultralytics magic seed
-    
+    generator.manual_seed(seed)
+
     # Prefetch factor: Number of batches to load ahead per worker
     # Rationale: Overlaps data loading (I/O) with model forward/backward (GPU)
     # 4 is higher than default 2, trading memory for throughput
@@ -121,10 +156,10 @@ def build_dataloader(
     # Avoid dropping full batches unnecessarily
     should_drop_last = drop_last and (len(dataset) % batch != 0)
     
-    return InfiniteDataLoader(
+    loader = InfiniteDataLoader(
         dataset=dataset,
         batch_size=batch,
-        shuffle=shuffle and sampler is None,
+        shuffle=False,  # the sampler shuffles
         num_workers=nw,
         sampler=sampler,
         prefetch_factor=prefetch_factor,
@@ -134,3 +169,5 @@ def build_dataloader(
         generator=generator,
         drop_last=should_drop_last,
     )
+    loader.seed = seed
+    return loader
