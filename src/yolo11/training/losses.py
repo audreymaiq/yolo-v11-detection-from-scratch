@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -133,7 +134,8 @@ class v8DetectionLoss(nn.Module):
         """Initializes v8DetectionLoss with the model, defining class attributes and BCE loss."""
         super().__init__()
         device = next(model.parameters()).device  # get model device
-        h = model.args  # hyperparameters
+        h = model.args  # hyperparameters: a namespace while training, a dict on models loaded from a checkpoint
+        h = SimpleNamespace(**h) if isinstance(h, dict) else h
 
         m = model.model[-1]  # Detect() module
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
