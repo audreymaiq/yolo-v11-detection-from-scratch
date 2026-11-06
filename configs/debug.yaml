@@ -93,6 +93,8 @@ save_dir: runs # (str) Directory for saving checkpoints and logs.
 save: True # (bool) Save training checkpoints.
 save_period: 0 # (int) Frequency of saving checkpoints in epochs (0 = save only best/last).
 plots: True # (bool) Generate and save training plots and debug images.
+mlflow: False # (bool) Log params, provenance, metrics and the run directory to MLflow (MLFLOW_TRACKING_URI).
+wandb: False # (bool) Log the same to Weights & Biases (PROJECT_NAME).
 save_json: False # (bool) Save validation results to COCO JSON format.
 save_txt: False # (bool) Save detection results to text files.
 save_conf: False # (bool) Save confidence scores in text files.
