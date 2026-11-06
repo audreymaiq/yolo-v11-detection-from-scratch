@@ -1,0 +1,15 @@
+# Only pyproject.toml, uv.lock, README.md, src/ and configs/ are copied; keep the build context small.
+.git
+.venv
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.egg-info
+datasets
+runs
+logs
+tests
+*.pt
+*.onnx
+*.torchscript
+*.cache
